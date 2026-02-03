@@ -1,0 +1,5 @@
+# https://satriabmnyu.com
+User-agent: *
+Allow: /
+
+Sitemap: https://satriabmnyu.com/sitemap.xml
