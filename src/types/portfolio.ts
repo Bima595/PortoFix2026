@@ -52,6 +52,7 @@ export interface SideProject {
   description?: string;
   year?: string;
   images?: Array<{
+    _key?: string;
     asset: {
       _ref: string;
       _type: string;

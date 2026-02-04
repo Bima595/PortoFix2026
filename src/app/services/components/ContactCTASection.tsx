@@ -64,9 +64,9 @@ export function ContactCTASection() {
         <motion.div variants={itemVariants} className="mt-20 pt-20 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-8">
           <p className="text-zinc-500 font-medium">© 2024 Satriabmnyu. All rights reserved.</p>
           <div className="flex items-center gap-8">
-            <a href="#" className="text-zinc-400 hover:text-white transition-colors font-medium">Twitter</a>
-            <a href="#" className="text-zinc-400 hover:text-white transition-colors font-medium">LinkedIn</a>
-            <a href="#" className="text-zinc-400 hover:text-white transition-colors font-medium">Instagram</a>
+            <a href="https://x.com/itsVonVon" className="text-zinc-400 hover:text-white transition-colors font-medium">Twitter</a>
+            <a href="https://www.linkedin.com/in/satriaabimanyu/" className="text-zinc-400 hover:text-white transition-colors font-medium">LinkedIn</a>
+            <a href="https://www.instagram.com/satriabmnyu/" className="text-zinc-400 hover:text-white transition-colors font-medium">Instagram</a>
           </div>
         </motion.div>
       </motion.div>

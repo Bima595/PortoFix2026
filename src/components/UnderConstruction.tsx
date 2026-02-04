@@ -33,7 +33,7 @@ export function UnderConstruction({ title, description = "This page is currently
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.3, duration: 0.5 }}
-            className="text-3xl md:text-4xl font-bold tracking-tight bg-gradient-to-br from-white to-zinc-500 bg-clip-text text-transparent"
+            className="text-3xl md:text-4xl font-bold tracking-tight bg-linear-to-br from-white to-zinc-500 bg-clip-text text-transparent"
           >
             {title}
           </motion.h1>

@@ -5,14 +5,8 @@ import { Calendar } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { urlFor } from '@/sanity/lib/image';
+import type { SideProject } from '@/types/portfolio';
 import Link from 'next/link';
-
-interface SideProject {
-  _id: string;
-  name: string;
-  description?: string;
-  images?: { asset: { _ref: string }; _key: string }[];
-}
 
 interface HeroSectionProps {
   projects: SideProject[];
