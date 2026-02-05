@@ -22,7 +22,7 @@ function ProjectCard({ project, index }: { project: SideProject; index: number }
 
     const interval = setInterval(() => {
       setCurrentImageIndex((prev) => (prev + 1) % images.length);
-    }, 1000);
+    }, 2000);
 
     return () => clearInterval(interval);
   }, [isHovered, images.length]);

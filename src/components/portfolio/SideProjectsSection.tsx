@@ -175,7 +175,7 @@ function ProjectCard({ project, onImageClick }: ProjectCardProps) {
   const currentImage = images[currentImageIndex];
 
   return (
-    <div className="flex flex-col rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden">
+    <div className="flex flex-col h-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden">
       {/* Project Image - Top Half with Slider */}
       {currentImage && (
         <div 
@@ -234,57 +234,15 @@ function ProjectCard({ project, onImageClick }: ProjectCardProps) {
       )}
 
       {/* Project Info - Bottom Half */}
-      <div className="flex flex-col gap-1 md:gap-3 p-2 md:p-5">
-        {/* Title and Year */}
-        <div className="flex items-start justify-between gap-1 md:gap-3">
-          <div className="flex-1 min-w-0">
-            <h3 className="font-semibold text-xs md:text-lg text-zinc-900 dark:text-white">
-              {project.name}
-            </h3>
-            {project.year && (
-              <p className="text-[10px] md:text-sm text-zinc-500 dark:text-zinc-500">
-                {project.year}
-              </p>
-            )}
-          </div>
-          
-          {/* Links */}
-          <div className="flex items-center gap-0.5 md:gap-1.5 shrink-0">
-            {project.repoLink && (
-              <a
-                href={project.repoLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="p-1.5 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                aria-label="View repository"
-              >
-                <Github className="w-3 h-3 md:w-4 md:h-4 text-zinc-600 dark:text-zinc-400" />
-              </a>
-            )}
-            {project.demoLink && (
-              <a
-                href={project.demoLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="p-1.5 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                aria-label="View demo"
-              >
-                <ExternalLink className="w-3 h-3 md:w-4 md:h-4 text-zinc-600 dark:text-zinc-400" />
-              </a>
-            )}
-          </div>
-        </div>
-
-        {/* Description - Hidden on mobile */}
-        {project.description && (
-          <p className="hidden md:block text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
-            {project.description}
-          </p>
-        )}
+      <div className="flex flex-col flex-1 gap-1 md:gap-3 p-2 md:p-5">
+        {/* Title */}
+        <h3 className="font-semibold text-xs md:text-lg text-zinc-900 dark:text-white">
+          {project.name}
+        </h3>
 
         {/* Tech Stack */}
         {project.techStack && project.techStack.length > 0 && (
-          <div className="flex flex-wrap gap-1 md:gap-1.5 mt-1">
+          <div className="flex flex-wrap gap-1 md:gap-1.5 mt-auto">
             {project.techStack.map((tech, i) => (
               <span
                 key={i}
