@@ -22,7 +22,7 @@ export function BioSection({ bio }: BioSectionProps) {
     >
       <div className="flex items-center gap-4">
         {bio.avatar && (
-          <div className="relative w-24 h-24 md:w-28 md:h-28 rounded-full overflow-hidden ring-1 ring-zinc-800 transition-all duration-500 hover:scale-110 hover:ring-2 hover:ring-zinc-400 cursor-pointer shadow-sm hover:shadow-2xl hover:shadow-zinc-500/20">
+          <div className="relative w-16 h-16 md:w-24 md:h-24 rounded-full overflow-hidden ring-1 ring-zinc-800 transition-all duration-500 hover:scale-110 hover:ring-2 hover:ring-zinc-400 cursor-pointer shadow-sm hover:shadow-2xl hover:shadow-zinc-500/20 shrink-0">
             <Image
               src={urlFor(bio.avatar).width(800).quality(100).url()}
               alt={bio.name}
@@ -51,7 +51,7 @@ export function BioSection({ bio }: BioSectionProps) {
           {bio.resume && (
             <a
               href={`${bio.resume}?dl=${bio.name.replace(/\s+/g, '_')}_Resume.pdf`}
-              className="mt-3 inline-flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-100 transition-colors group"
+              className="mt-1.5 md:mt-3 inline-flex items-center gap-2 text-xs font-medium text-zinc-400 hover:text-zinc-100 transition-colors group"
             >
               <Download className="w-3.5 h-3.5 group-hover:-translate-y-0.5 transition-transform" />
               Download Resume

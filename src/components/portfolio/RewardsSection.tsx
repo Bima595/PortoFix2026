@@ -38,8 +38,34 @@ export function RewardsSection({ rewards }: RewardsSectionProps) {
         isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
       }`}
     >
-      <h2 className="text-lg font-semibold mb-8 tracking-tight">Rewards & Awards</h2>
-      <div className="flex flex-col gap-6">
+      <h2 className="text-lg font-semibold mb-6 tracking-tight">Rewards & Awards</h2>
+      
+      {/* Mobile Layout - Stacked */}
+      <div className="flex flex-col gap-5 md:hidden">
+        {rewards.map((reward) => (
+          <div key={reward._id} className="flex flex-col gap-0.5">
+            {/* Date Range */}
+            <div className="text-sm text-zinc-500">
+              {formatDate(reward.date)}
+            </div>
+
+            {/* Award Name */}
+            <h3 className="font-semibold text-base text-zinc-100">
+              {reward.name}
+            </h3>
+
+            {/* Description */}
+            {reward.description && (
+              <p className="text-sm text-zinc-400 leading-relaxed">
+                {reward.description}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop Layout - Side by side */}
+      <div className="hidden md:flex flex-col gap-8">
         {rewards.map((reward) => (
           <div key={reward._id} className="flex gap-12">
             {/* Date - Left Side */}

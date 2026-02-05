@@ -58,8 +58,8 @@ export function PortfolioContent({
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden">
-      <main className="relative z-10 w-full max-w-xl mx-auto min-h-screen flex flex-col justify-center items-start py-20 px-6 md:px-0">
-        <div className="flex flex-col gap-12 text-zinc-100 w-full">
+      <main className="relative z-10 w-full max-w-xl mx-auto min-h-screen flex flex-col justify-start md:justify-center items-start py-8 md:py-20 px-6 md:px-0">
+        <div className="flex flex-col gap-6 md:gap-12 text-zinc-100 w-full">
           <BioSection bio={bio} />
           <AboutSection description={bio.description} />
           <WorkExperienceSection workExperience={workExperience} />

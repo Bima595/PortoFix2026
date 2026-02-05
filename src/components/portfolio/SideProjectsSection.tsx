@@ -17,6 +17,7 @@ export function SideProjectsSection({ sideProjects }: SideProjectsSectionProps) 
     images: { url: string; alt: string }[];
     currentIndex: number;
   } | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const { ref, isVisible } = useScrollFade();
 
   if (!sideProjects || sideProjects.length === 0) {
@@ -46,6 +47,12 @@ export function SideProjectsSection({ sideProjects }: SideProjectsSectionProps) 
     });
   };
 
+  const PROJECTS_PER_PAGE = 4;
+  const totalPages = Math.ceil(sideProjects.length / PROJECTS_PER_PAGE);
+  const startIndex = (currentPage - 1) * PROJECTS_PER_PAGE;
+  const endIndex = startIndex + PROJECTS_PER_PAGE;
+  const visibleProjects = sideProjects.slice(startIndex, endIndex);
+
   return (
     <section 
       ref={ref}
@@ -54,8 +61,8 @@ export function SideProjectsSection({ sideProjects }: SideProjectsSectionProps) 
       }`}
     >
       <h2 className="text-lg font-semibold mb-6 tracking-tight">Side Projects</h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {sideProjects.map((project) => (
+      <div className="grid grid-cols-2 gap-4 md:gap-6">
+        {visibleProjects.map((project) => (
           <ProjectCard 
             key={project._id} 
             project={project}
@@ -63,6 +70,47 @@ export function SideProjectsSection({ sideProjects }: SideProjectsSectionProps) 
           />
         ))}
       </div>
+
+      {/* Numbered Pagination */}
+      {totalPages > 1 && (
+        <div className="mt-6 flex justify-center items-center gap-2">
+          {/* Previous Button */}
+          <button
+            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+            disabled={currentPage === 1}
+            className="px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-100 border border-zinc-700 hover:border-zinc-500 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-zinc-700 disabled:hover:text-zinc-400"
+          >
+            Prev
+          </button>
+
+          {/* Page Numbers */}
+          <div className="flex items-center gap-1">
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+              <button
+                key={page}
+                onClick={() => setCurrentPage(page)}
+                className={`w-8 h-8 text-sm rounded-lg transition-colors ${
+                  page === currentPage
+                    ? 'bg-zinc-700 text-zinc-100 border border-zinc-600'
+                    : 'text-zinc-400 hover:text-zinc-100 border border-zinc-700 hover:border-zinc-500'
+                }`}
+              >
+                {page}
+              </button>
+            ))}
+          </div>
+
+          {/* Next Button */}
+          <button
+            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+            disabled={currentPage === totalPages}
+            className="px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-100 border border-zinc-700 hover:border-zinc-500 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-zinc-700 disabled:hover:text-zinc-400"
+          >
+            Next
+          </button>
+        </div>
+      )}
+
 
       {/* Image Lightbox */}
       {lightboxState && (
@@ -78,6 +126,7 @@ export function SideProjectsSection({ sideProjects }: SideProjectsSectionProps) 
     </section>
   );
 }
+
 
 interface ProjectCardProps {
   project: SideProject;
@@ -130,7 +179,7 @@ function ProjectCard({ project, onImageClick }: ProjectCardProps) {
       {/* Project Image - Top Half with Slider */}
       {currentImage && (
         <div 
-          className="relative w-full aspect-video bg-zinc-100 dark:bg-zinc-900 cursor-pointer group"
+          className="relative w-full aspect-4/3 md:aspect-video bg-zinc-100 dark:bg-zinc-900 cursor-pointer group"
           onClick={() => onImageClick(allImages, currentImageIndex)}
           onMouseEnter={() => setIsHovered(true)}
           onMouseLeave={() => setIsHovered(false)}
@@ -185,22 +234,22 @@ function ProjectCard({ project, onImageClick }: ProjectCardProps) {
       )}
 
       {/* Project Info - Bottom Half */}
-      <div className="flex flex-col gap-3 p-5">
+      <div className="flex flex-col gap-1 md:gap-3 p-2 md:p-5">
         {/* Title and Year */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1">
-            <h3 className="font-semibold text-lg text-zinc-900 dark:text-white">
+        <div className="flex items-start justify-between gap-1 md:gap-3">
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-xs md:text-lg text-zinc-900 dark:text-white">
               {project.name}
             </h3>
             {project.year && (
-              <p className="text-sm text-zinc-500 dark:text-zinc-500 mt-0.5">
+              <p className="text-[10px] md:text-sm text-zinc-500 dark:text-zinc-500">
                 {project.year}
               </p>
             )}
           </div>
           
           {/* Links */}
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-0.5 md:gap-1.5 shrink-0">
             {project.repoLink && (
               <a
                 href={project.repoLink}
@@ -209,7 +258,7 @@ function ProjectCard({ project, onImageClick }: ProjectCardProps) {
                 className="p-1.5 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
                 aria-label="View repository"
               >
-                <Github className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
+                <Github className="w-3 h-3 md:w-4 md:h-4 text-zinc-600 dark:text-zinc-400" />
               </a>
             )}
             {project.demoLink && (
@@ -220,26 +269,26 @@ function ProjectCard({ project, onImageClick }: ProjectCardProps) {
                 className="p-1.5 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
                 aria-label="View demo"
               >
-                <ExternalLink className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
+                <ExternalLink className="w-3 h-3 md:w-4 md:h-4 text-zinc-600 dark:text-zinc-400" />
               </a>
             )}
           </div>
         </div>
 
-        {/* Description */}
+        {/* Description - Hidden on mobile */}
         {project.description && (
-          <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
+          <p className="hidden md:block text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
             {project.description}
           </p>
         )}
 
         {/* Tech Stack */}
         {project.techStack && project.techStack.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-1">
+          <div className="flex flex-wrap gap-1 md:gap-1.5 mt-1">
             {project.techStack.map((tech, i) => (
               <span
                 key={i}
-                className="text-xs px-2 py-1 rounded-md bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-800"
+                className="text-[9px] md:text-xs px-1.5 md:px-2 py-0.5 md:py-1 rounded-md bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-800"
               >
                 {tech}
               </span>

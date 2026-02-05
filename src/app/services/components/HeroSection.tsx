@@ -156,9 +156,9 @@ export function HeroSection({ projects }: HeroSectionProps) {
   }
 
   return (
-    <section className="relative w-full min-h-screen flex flex-col justify-center py-20 overflow-hidden">
+    <section className="relative w-full min-h-screen flex flex-col justify-center py-10 md:py-20 overflow-hidden">
       {/* Header Content */}
-      <div className="max-w-6xl mx-auto z-10 mb-12 px-6 text-left">
+      <div className="max-w-6xl mx-auto z-10 mb-6 md:mb-12 px-6 text-left">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
