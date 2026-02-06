@@ -20,7 +20,8 @@ export function useScrollFade(options: UseScrollFadeOptions = {}) {
     const isMobile = window.innerWidth < 768;
 
     if (isMobile) {
-      setIsVisible(true);
+      // Defer state update to avoid synchronous render warning
+      setTimeout(() => setIsVisible(true), 0);
       return;
     }
 
