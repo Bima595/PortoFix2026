@@ -38,6 +38,19 @@ export const sideProjectQuery = `*[_type == "sideProject"] | order(_createdAt de
   name,
   description,
   year,
+  coverImage,
+  images,
+  repoLink,
+  demoLink,
+  techStack
+}`;
+
+export const singleSideProjectQuery = `*[_type == "sideProject" && _id == $id][0] {
+  _id,
+  name,
+  description,
+  year,
+  coverImage,
   images,
   repoLink,
   demoLink,
@@ -112,4 +125,18 @@ export const pricingQuery = `*[_type == "pricing"] | order(order asc) {
   addOnFeatures,
   addOnCtaLabel,
   order
+}`;
+
+export const photoboothTemplateQuery = `*[_type == "photoboothTemplate" && isActive == true] | order(_createdAt asc) {
+  _id,
+  name,
+  frameImage,
+  maxPhotos,
+  layout,
+  isActive,
+  topPadding,
+  bottomPadding,
+  sidePadding,
+  rowSpacing,
+  colSpacing
 }`;

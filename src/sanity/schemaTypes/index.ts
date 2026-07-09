@@ -11,6 +11,7 @@ import {statsType} from './statsType'
 import {projectType} from './projectType'
 import {fieldType} from './fieldType'
 import {pricingType} from './pricingType'
+import {photoboothTemplateType} from './photoboothTemplateType'
 
 export const schema: { types: SchemaTypeDefinition[] } = {
   types: [
@@ -25,5 +26,6 @@ export const schema: { types: SchemaTypeDefinition[] } = {
     projectType,
     fieldType,
     pricingType,
+    photoboothTemplateType,
   ],
 }

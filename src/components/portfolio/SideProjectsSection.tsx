@@ -1,23 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import Image from 'next/image';
 import { urlFor } from '@/sanity/lib/image';
-import { ExternalLink, Github, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { SideProject } from '@/types/portfolio';
-import { ImageLightbox } from '@/components/ImageLightbox';
 import { useScrollFade } from '@/hooks/useScrollFade';
+import { useRouter } from 'next/navigation';
 
 interface SideProjectsSectionProps {
   sideProjects: SideProject[];
 }
 
 export function SideProjectsSection({ sideProjects }: SideProjectsSectionProps) {
-  const [lightboxState, setLightboxState] = useState<{
-    images: { url: string; alt: string }[];
-    currentIndex: number;
-  } | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
   const { ref, isVisible } = useScrollFade();
 
   if (!sideProjects || sideProjects.length === 0) {
@@ -31,28 +23,6 @@ export function SideProjectsSection({ sideProjects }: SideProjectsSectionProps) 
     );
   }
 
-  const handleNextImage = () => {
-    if (!lightboxState) return;
-    setLightboxState({
-      ...lightboxState,
-      currentIndex: (lightboxState.currentIndex + 1) % lightboxState.images.length
-    });
-  };
-
-  const handlePrevImage = () => {
-    if (!lightboxState) return;
-    setLightboxState({
-      ...lightboxState,
-      currentIndex: (lightboxState.currentIndex - 1 + lightboxState.images.length) % lightboxState.images.length
-    });
-  };
-
-  const PROJECTS_PER_PAGE = 4;
-  const totalPages = Math.ceil(sideProjects.length / PROJECTS_PER_PAGE);
-  const startIndex = (currentPage - 1) * PROJECTS_PER_PAGE;
-  const endIndex = startIndex + PROJECTS_PER_PAGE;
-  const visibleProjects = sideProjects.slice(startIndex, endIndex);
-
   return (
     <section 
       ref={ref}
@@ -61,227 +31,61 @@ export function SideProjectsSection({ sideProjects }: SideProjectsSectionProps) 
       }`}
     >
       <h2 className="text-lg font-semibold mb-6 tracking-tight">Side Projects</h2>
-      <div className="grid grid-cols-2 gap-4 md:gap-6">
-        {visibleProjects.map((project) => (
+      <div className="grid grid-cols-2 gap-4 md:gap-8 md:-mx-20 md:w-[calc(100%+10rem)]">
+        {sideProjects.map((project) => (
           <ProjectCard 
             key={project._id} 
             project={project}
-            onImageClick={(images, index) => setLightboxState({ images, currentIndex: index })}
           />
         ))}
       </div>
-
-      {/* Numbered Pagination */}
-      {totalPages > 1 && (
-        <div className="mt-6 flex justify-center items-center gap-2">
-          {/* Previous Button */}
-          <button
-            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-            disabled={currentPage === 1}
-            className="px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-100 border border-zinc-700 hover:border-zinc-500 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-zinc-700 disabled:hover:text-zinc-400"
-          >
-            Prev
-          </button>
-
-          {/* Page Numbers */}
-          <div className="flex items-center gap-1">
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-              <button
-                key={page}
-                onClick={() => setCurrentPage(page)}
-                className={`w-8 h-8 text-sm rounded-lg transition-colors ${
-                  page === currentPage
-                    ? 'bg-zinc-700 text-zinc-100 border border-zinc-600'
-                    : 'text-zinc-400 hover:text-zinc-100 border border-zinc-700 hover:border-zinc-500'
-                }`}
-              >
-                {page}
-              </button>
-            ))}
-          </div>
-
-          {/* Next Button */}
-          <button
-            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-            disabled={currentPage === totalPages}
-            className="px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-100 border border-zinc-700 hover:border-zinc-500 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-zinc-700 disabled:hover:text-zinc-400"
-          >
-            Next
-          </button>
-        </div>
-      )}
-
-
-      {/* Image Lightbox */}
-      {lightboxState && (
-        <ImageLightbox
-          isOpen={!!lightboxState}
-          images={lightboxState.images}
-          currentIndex={lightboxState.currentIndex}
-          onClose={() => setLightboxState(null)}
-          onNext={handleNextImage}
-          onPrev={handlePrevImage}
-        />
-      )}
     </section>
   );
 }
 
-
 interface ProjectCardProps {
   project: SideProject;
-  onImageClick: (images: { url: string; alt: string }[], index: number) => void;
 }
 
-function ProjectCard({ project, onImageClick }: ProjectCardProps) {
-  const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const [isHovered, setIsHovered] = useState(false);
+function ProjectCard({ project }: ProjectCardProps) {
+  const router = useRouter();
 
-  const images = project.images || [];
-  const hasMultipleImages = images.length > 1;
+  const images = project.coverImage
+    ? [project.coverImage, ...(project.images || [])]
+    : (project.images || []);
 
-  // Auto-slide every 3 seconds when not hovered
-  useEffect(() => {
-    if (!hasMultipleImages || isHovered) return;
-
-    const interval = setInterval(() => {
-      setCurrentImageIndex((prev) => (prev + 1) % images.length);
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [hasMultipleImages, isHovered, images.length]);
-
-  const handleNext = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCurrentImageIndex((prev) => (prev + 1) % images.length);
-  };
-
-  const handlePrev = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCurrentImageIndex((prev) => (prev - 1 + images.length) % images.length);
-  };
-
-  const handleDotClick = (index: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCurrentImageIndex(index);
-  };
-
-  // Prepare all images for lightbox
-  const allImages = images.map((image) => ({
-    url: urlFor(image).width(1920).quality(95).url(),
-    alt: image.alt || `${project.name} screenshot`
-  }));
-
-  const currentImage = images[currentImageIndex];
+  const currentImage = images[0];
 
   return (
-    <div className="flex flex-col h-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden">
-      {/* Project Image - Top Half with Slider */}
+    <div 
+      className="relative w-full aspect-video rounded-2xl overflow-hidden bg-zinc-950 border border-zinc-200/10 dark:border-white/5 flex items-center justify-center shadow-xl cursor-pointer group"
+      onClick={() => router.push(`/projects/${project._id}`)}
+    >
       {currentImage && (
-        <div 
-          className="relative w-full aspect-4/3 md:aspect-video bg-zinc-100 dark:bg-zinc-900 cursor-pointer group"
-          onClick={() => onImageClick(allImages, currentImageIndex)}
-          onMouseEnter={() => setIsHovered(true)}
-          onMouseLeave={() => setIsHovered(false)}
-        >
-          <Image
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
             src={urlFor(currentImage).width(800).quality(85).url()}
             alt={currentImage.alt || `${project.name} screenshot`}
-            fill
-            className="object-cover transition-transform group-hover:scale-105"
-            sizes="(max-width: 768px) 100vw, 50vw"
-            quality={85}
+            className="w-full h-full object-cover transition-all duration-300 group-hover:scale-105 group-hover:blur-[2px] group-hover:opacity-75"
+            draggable={false}
           />
 
-          {/* Navigation Arrows - Show on hover if multiple images */}
-          {hasMultipleImages && (
-            <>
-              <button
-                onClick={handlePrev}
-                className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/50 hover:bg-black/70 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                aria-label="Previous image"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button
-                onClick={handleNext}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/50 hover:bg-black/70 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                aria-label="Next image"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </>
-          )}
+          {/* Title Overlay at the bottom */}
+          <div className="absolute inset-x-0 bottom-0 bg-linear-to-t from-black/90 via-black/45 to-transparent p-4 pt-12 flex items-end z-10 transition-opacity duration-300 group-hover:opacity-0 pointer-events-none">
+            <h3 className="font-semibold text-xs sm:text-sm md:text-base text-zinc-100 tracking-wide font-sans wrap-break-word line-clamp-2 leading-snug">
+              {project.name}
+            </h3>
+          </div>
 
-          {/* Dots Indicator */}
-          {hasMultipleImages && (
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
-              {images.map((_, index) => (
-                <button
-                  key={index}
-                  onClick={(e) => handleDotClick(index, e)}
-                  className={`w-1.5 h-1.5 rounded-full transition-all ${
-                    index === currentImageIndex
-                      ? 'bg-white w-4'
-                      : 'bg-white/50 hover:bg-white/75'
-                  }`}
-                  aria-label={`Go to image ${index + 1}`}
-                />
-              ))}
-            </div>
-          )}
-        </div>
+          {/* Centered View Project Overlay on hover - Smaller badge */}
+          <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center z-10">
+            <span className="px-3 py-1 bg-white/95 text-zinc-950 font-bold text-[9px] md:text-xs tracking-wider uppercase rounded-full shadow-md transform translate-y-1.5 group-hover:translate-y-0 transition-all duration-300">
+              View Project
+            </span>
+          </div>
+        </>
       )}
-
-      {/* Project Info - Bottom Half */}
-      <div className="flex flex-col flex-1 gap-1 md:gap-3 p-2 md:p-5">
-        {/* Title and Links */}
-        <div className="flex items-start justify-between gap-1 md:gap-3">
-          <h3 className="font-semibold text-xs md:text-lg text-zinc-900 dark:text-white flex-1 min-w-0">
-            {project.name}
-          </h3>
-
-          {/* Links */}
-          <div className="flex items-center gap-0.5 md:gap-1.5 shrink-0">
-            {project.repoLink && (
-              <a
-                href={project.repoLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="p-1.5 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                aria-label="View repository"
-              >
-                <Github className="w-3 h-3 md:w-4 md:h-4 text-zinc-600 dark:text-zinc-400" />
-              </a>
-            )}
-            {project.demoLink && (
-              <a
-                href={project.demoLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="p-1.5 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                aria-label="View demo"
-              >
-                <ExternalLink className="w-3 h-3 md:w-4 md:h-4 text-zinc-600 dark:text-zinc-400" />
-              </a>
-            )}
-          </div>
-        </div>
-
-        {/* Tech Stack */}
-        {project.techStack && project.techStack.length > 0 && (
-          <div className="flex flex-wrap gap-1 md:gap-1.5 mt-auto">
-            {project.techStack.map((tech, i) => (
-              <span
-                key={i}
-                className="text-[9px] md:text-xs px-1.5 md:px-2 py-0.5 md:py-1 rounded-md bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-800"
-              >
-                {tech}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 }

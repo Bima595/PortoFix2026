@@ -4,6 +4,7 @@ import {
   workExperienceQuery,
   rewardQuery,
   sideProjectQuery,
+  singleSideProjectQuery,
   educationQuery,
   certificateQuery,
   skillQuery,
@@ -11,6 +12,7 @@ import {
   projectQuery,
   fieldQuery,
   pricingQuery,
+  photoboothTemplateQuery,
 } from './queries';
 import type {
   Bio,
@@ -20,6 +22,7 @@ import type {
   Education,
   Certificate,
   Skill,
+  PhotoboothTemplate,
 } from '@/types/portfolio';
 
 export async function getBio(): Promise<Bio | null> {
@@ -64,4 +67,12 @@ export async function getFields() {
 
 export async function getPricing() {
   return client.fetch(pricingQuery, {}, { next: { revalidate: 60 } });
+}
+
+export async function getPhotoboothTemplates(): Promise<PhotoboothTemplate[]> {
+  return client.fetch(photoboothTemplateQuery, {}, { next: { revalidate: 60 } });
+}
+
+export async function getSideProjectById(id: string): Promise<SideProject | null> {
+  return client.fetch(singleSideProjectQuery, { id }, { next: { revalidate: 60 } });
 }

@@ -51,6 +51,13 @@ export interface SideProject {
   name: string;
   description?: string;
   year?: string;
+  coverImage?: {
+    asset: {
+      _ref: string;
+      _type: string;
+    };
+    alt?: string;
+  };
   images?: Array<{
     _key?: string;
     asset: {
@@ -97,4 +104,23 @@ export interface Skill {
   category: string;
   skills: string[];
   order?: number;
+}
+
+export interface PhotoboothTemplate {
+  _id: string;
+  name: string;
+  frameImage?: {
+    asset: {
+      _ref: string;
+      _type: string;
+    };
+  };
+  maxPhotos: number;
+  layout: 'strip' | 'grid' | 'single';
+  isActive: boolean;
+  topPadding?: number;
+  bottomPadding?: number;
+  sidePadding?: number;
+  rowSpacing?: number;
+  colSpacing?: number;
 }

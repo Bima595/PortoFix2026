@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { Plus_Jakarta_Sans } from 'next/font/google';
 
 import { GlobalSnowfall } from '@/components/GlobalSnowfall';
+
+const plusJakartaSans = Plus_Jakarta_Sans({
+  subsets: ['latin'],
+  variable: '--font-plus-jakarta',
+});
 
 export const metadata: Metadata = {
   title: "Satriabmnyu Tempest",
@@ -17,6 +23,11 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "Satria Abimanyu Putra Wijayatama" }],
   creator: "Satria Abimanyu Putra Wijayatama",
+  icons: {
+    icon: "/Logo.png",
+    shortcut: "/Logo.png",
+    apple: "/Logo.png",
+  },
   openGraph: {
     type: "website",
     locale: "en_US",
@@ -24,11 +35,20 @@ export const metadata: Metadata = {
     siteName: "Satria Abimanyu Portfolio",
     title: "Satriabmnyu || Full Stack Developer",
     description: "Portfolio of Satria Abimanyu Putra Wijayatama - Software Engineer & Full Stack Developer",
+    images: [
+      {
+        url: "/Logo.png",
+        width: 800,
+        height: 800,
+        alt: "Satriabmnyu Logo",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Satriabmnyu || Full Stack Developer",
     description: "Portfolio of Satria Abimanyu Putra Wijayatama - Software Engineer & Full Stack Developer",
+    images: ["/Logo.png"],
   },
   robots: {
     index: true,
@@ -49,7 +69,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className={`dark ${plusJakartaSans.variable}`}>
       <body className="antialiased bg-black">
         <GlobalSnowfall />
         {children}

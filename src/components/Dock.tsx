@@ -9,7 +9,7 @@ import {
   type SpringOptions,
   AnimatePresence
 } from 'motion/react';
-import React, { Children, cloneElement, useEffect, useRef, useState } from 'react';
+import React, { Children, cloneElement, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 export type DockItemData = {
   icon: React.ReactNode;
@@ -135,6 +135,8 @@ function DockIcon({ children, className = '' }: DockIconProps) {
   return <div className={`flex items-center justify-center ${className}`}>{children}</div>;
 }
 
+const emptySubscribe = () => () => {};
+
 export default function Dock({
   items,
   className = '',
@@ -147,6 +149,15 @@ export default function Dock({
   const mouseX = useMotionValue(Infinity);
   const isHovered = useMotionValue(0);
 
+  const isMounted = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
+
+  if (!isMounted) {
+    return null;
+  }
 
   return (
     <motion.div style={{ height: panelHeight, scrollbarWidth: 'none' }} className="mx-auto flex w-fit max-w-full items-center mb-6">

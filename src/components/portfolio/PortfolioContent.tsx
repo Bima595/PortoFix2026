@@ -1,6 +1,6 @@
 'use client';
 
-import { Home, Users, } from 'lucide-react';
+import { Home, Users, Camera } from 'lucide-react';
 import Dock from '@/components/Dock';
 import { BioSection } from '@/components/portfolio/BioSection';
 import { AboutSection } from '@/components/portfolio/AboutSection';

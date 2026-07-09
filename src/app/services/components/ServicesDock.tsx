@@ -1,7 +1,7 @@
 'use client';
 
 import Dock from '@/components/Dock';
-import { Home, Users } from 'lucide-react';
+import { Home, Users, Camera } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 export function ServicesDock() {
@@ -24,6 +24,17 @@ export function ServicesDock() {
         }
       },
     },
+    // {
+    //   icon: <Camera className="w-5 h-5 text-zinc-400" />,
+    //   label: 'Photo Booth',
+    //   onClick: () => {
+    //     if (window.location.pathname === '/photobooth') {
+    //       window.scrollTo({ top: 0, behavior: 'smooth' });
+    //     } else {
+    //       router.push('/photobooth');
+    //     }
+    //   },
+    // },
   ];
 
   return (

@@ -20,6 +20,13 @@ export const SideProjectType = defineType({
       description: 'Brief description of the project',
     }),
     defineField({
+      name: 'coverImage',
+      title: 'Cover Image',
+      type: 'image',
+      description: 'Main display image/cover of the project',
+      options: {hotspot: true},
+    }),
+    defineField({
       name: 'images',
       title: 'Project Images',
       type: 'array' as const,
