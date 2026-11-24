@@ -1,93 +1,70 @@
 'use client';
 
-import { useScrollFade } from '@/hooks/useScrollFade';
+import { motion } from 'motion/react';
 import type { Reward } from '@/types/portfolio';
 
 interface RewardsSectionProps {
   rewards: Reward[];
+  indexLabel?: string;
 }
 
-// Format date to YYYY (year only)
+const EASE = [0.21, 0.47, 0.32, 0.98] as [number, number, number, number];
+
 const formatDate = (dateString: string): string => {
   if (!dateString) return '';
-  // If already a 4-digit year, return as is
   if (/^\d{4}$/.test(dateString)) return dateString;
-  // Otherwise extract year
   const date = new Date(dateString);
-  return String(date.getFullYear());
+  return Number.isNaN(date.getTime()) ? dateString : String(date.getFullYear());
 };
 
-export function RewardsSection({ rewards }: RewardsSectionProps) {
-  const { ref, isVisible } = useScrollFade();
-
-  if (!rewards || rewards.length === 0) {
-    return (
-      <section>
-        <h2 className="text-lg font-semibold mb-6 tracking-tight">Rewards & Awards</h2>
-        <div className="text-sm text-zinc-500 italic">
-          No rewards added yet.
-        </div>
-      </section>
-    );
-  }
-
+export function RewardsSection({ rewards, indexLabel = '04' }: RewardsSectionProps) {
   return (
-    <section 
-      ref={ref}
-      className={`transition-all duration-700 ease-out ${
-        isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
-      }`}
+    <motion.section
+      id="awards"
+      aria-labelledby="awards-heading"
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.15 }}
+      transition={{ duration: 0.6, delay: 0.06, ease: EASE }}
+      className="space-y-6"
     >
-      <h2 className="text-lg font-semibold mb-6 tracking-tight">Rewards & Awards</h2>
-      
-      {/* Mobile Layout - Stacked */}
-      <div className="flex flex-col gap-5 md:hidden">
-        {rewards.map((reward) => (
-          <div key={reward._id} className="flex flex-col gap-0.5">
-            {/* Date Range */}
-            <div className="text-sm text-zinc-500">
-              {formatDate(reward.date)}
-            </div>
-
-            {/* Award Name */}
-            <h3 className="font-semibold text-base text-zinc-100">
-              {reward.name}
-            </h3>
-
-            {/* Description */}
-            {reward.description && (
-              <p className="text-sm text-zinc-400 leading-relaxed">
-                {reward.description}
-              </p>
-            )}
-          </div>
-        ))}
+      <div className="space-y-1.5">
+        <span className="block text-xs font-medium tabular-nums text-[#94949E]">
+          {indexLabel}
+        </span>
+        <h2
+          id="awards-heading"
+          className="text-2xl font-bold tracking-[-0.025em] text-white sm:text-3xl"
+        >
+          Awards
+        </h2>
       </div>
 
-      {/* Desktop Layout - Side by side */}
-      <div className="hidden md:flex flex-col gap-8">
-        {rewards.map((reward) => (
-          <div key={reward._id} className="flex gap-12">
-            {/* Date - Left Side */}
-            <div className="w-28 shrink-0 text-sm text-zinc-500 whitespace-nowrap">
-              {formatDate(reward.date)}
-            </div>
-
-            {/* Content - Right Side */}
-            <div className="flex-1 flex flex-col gap-2">
-              <h3 className="font-semibold text-base text-zinc-100">
-                {reward.name}
-              </h3>
-              
+      {!rewards || rewards.length === 0 ? (
+        <p className="text-sm text-[#94949E]">
+          No awards have been published yet.
+        </p>
+      ) : (
+        <div className="divide-y divide-white/10">
+          {rewards.map((reward) => (
+            <article key={reward._id} className="space-y-1.5 py-5 first:pt-2 last:pb-0">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                <h3 className="text-[15px] font-semibold leading-snug text-zinc-100">
+                  {reward.name}
+                </h3>
+                <span className="shrink-0 text-xs tabular-nums text-[#94949E]">
+                  {formatDate(reward.date)}
+                </span>
+              </div>
               {reward.description && (
-                <p className="text-sm text-zinc-400 leading-relaxed">
+                <p className="text-sm leading-relaxed text-zinc-400">
                   {reward.description}
                 </p>
               )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
+            </article>
+          ))}
+        </div>
+      )}
+    </motion.section>
   );
 }

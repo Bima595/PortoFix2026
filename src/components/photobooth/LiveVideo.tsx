@@ -1,18 +1,27 @@
+'use client';
+
 import React, { useRef, useEffect } from 'react';
 
 interface LiveVideoProps {
   stream: MediaStream | null;
   isMirrored: boolean;
-  filterClass: string;
+  cssFilter: string;
   className?: string;
 }
 
-export default function LiveVideo({ stream, isMirrored, filterClass, className = '' }: LiveVideoProps) {
+export default function LiveVideo({
+  stream,
+  isMirrored,
+  cssFilter,
+  className = '',
+}: LiveVideoProps) {
   const localVideoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    if (localVideoRef.current && stream) {
-      localVideoRef.current.srcObject = stream;
+    const videoEl = localVideoRef.current;
+    if (!videoEl) return;
+    if (videoEl.srcObject !== stream) {
+      videoEl.srcObject = stream;
     }
   }, [stream]);
 
@@ -22,7 +31,10 @@ export default function LiveVideo({ stream, isMirrored, filterClass, className =
       autoPlay
       playsInline
       muted
-      className={`${className} ${filterClass} ${isMirrored ? '-scale-x-100' : ''}`}
+      className={`${className} ${isMirrored ? '-scale-x-100' : ''}`}
+      style={{
+        filter: cssFilter && cssFilter !== 'none' ? cssFilter : undefined,
+      }}
     />
   );
 }

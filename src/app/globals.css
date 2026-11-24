@@ -122,6 +122,110 @@
   body {
     @apply bg-background text-foreground;
   }
+  a[href],
+  button,
+  summary,
+  select,
+  label[for],
+  label:has(> input[type="checkbox"], > input[type="radio"]),
+  [role="button"],
+  [role="link"],
+  [role="tab"],
+  [role="menuitem"],
+  [role="option"],
+  [role="switch"],
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="file"],
+  input[type="submit"],
+  input[type="button"],
+  input[type="reset"],
+  input[type="range"],
+  input[type="color"] {
+    cursor: pointer;
+  }
+  :disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+}
+
+/* Home Monochrome Dark & White Theme Tokens (aligned with /services visual identity) */
+.home-mono {
+  --home-bg: #09090B;
+  --home-surface: #111113;
+  --home-surface-hover: #18181B;
+  --home-fg: #FAFAFA;
+  --home-fg-muted: #A1A1AA;
+  --home-fg-subtle: #94949E;
+  --home-border: rgba(255, 255, 255, 0.10);
+  --home-border-strong: #676773;
+  --home-accent: #FFFFFF;
+  --home-accent-hover: #E4E4E7;
+  --home-accent-ink: #09090B;
+  background-color: var(--home-bg);
+  background-image: radial-gradient(
+    ellipse 85% 420px at 50% 0%,
+    rgba(255, 255, 255, 0.055),
+    transparent 70%
+  );
+  color: var(--home-fg);
+  font-family: var(--font-sans);
+}
+
+.home-mono a:focus-visible,
+.home-mono button:focus-visible {
+  outline: 2px solid var(--home-accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-mono *,
+  .home-mono *::before,
+  .home-mono *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Monochrome scrollbars for Home */
+html:has(.home-mono) {
+  color-scheme: dark;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) #09090B;
+}
+
+.scrollbar-mono {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+.scrollbar-mono::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scrollbar-mono::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 999px;
+}
+
+.scrollbar-mono::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+}
+
+.scrollbar-mono::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.45);
 }
 
 @keyframes gradient {

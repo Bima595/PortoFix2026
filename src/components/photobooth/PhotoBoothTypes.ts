@@ -1,21 +1,54 @@
 import { PhotoboothTemplate } from '@/types/portfolio';
 
-export type BoothState = 'idle' | 'ready' | 'countdown' | 'flash' | 'processing' | 'review' | 'preview';
+export type BoothState = 'idle' | 'ready' | 'countdown' | 'flash' | 'review' | 'preview';
+
+export type CountdownMode = 0 | 3 | 5;
+
+export type FrameCategory = 'all' | 'strip' | 'grid' | 'polaroid' | 'editorial' | 'aesthetic' | 'cms' | 'custom';
+
+export type FrameDecoration =
+  | 'minimal'
+  | 'film-35mm'
+  | 'editorial-press'
+  | 'receipt'
+  | 'camcorder'
+  | 'polaroid'
+  | 'gallery-mat'
+  | 'contact-sheet'
+  | 'blush-ribbon'
+  | 'blueprint'
+  | 'chrome-y2k'
+  | 'linen-serif';
 
 export interface PlacedSticker {
   id: string;
   stickerId: string;
-  x: number; // percentage
-  y: number; // percentage
-  size: number; // cqw scale
+  x: number; // percentage 0-100
+  y: number; // percentage 0-100
+  size: number; // percentage of frame width (cqw)
   rotation: number; // degrees
 }
+
+export interface CustomFramePosition {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface PhotoTransform {
+  x: number; // percentage of slot width (-80 to 80)
+  y: number; // percentage of slot height (-80 to 80)
+  zoom: number; // scale factor (1 to 3)
+}
+
+export const DEFAULT_PHOTO_TRANSFORM: PhotoTransform = { x: 0, y: 0, zoom: 1 };
 
 export interface PhotoFilter {
   id: string;
   name: string;
-  class: string;
-  canvasFilter: string;
+  cssFilter: string;
+  swatch: string;
 }
 
 export interface SlotCoordinate {
@@ -26,15 +59,459 @@ export interface SlotCoordinate {
   photoIdx: number;
 }
 
-export const PHOTO_FILTERS: PhotoFilter[] = [
-  { id: 'normal', name: 'Normal', class: '', canvasFilter: 'none' },
-  { id: 'grayscale', name: 'B&W', class: 'grayscale', canvasFilter: 'grayscale(100%)' },
-  { id: 'sepia', name: 'Sepia', class: 'sepia', canvasFilter: 'sepia(80%)' },
-  { id: 'vintage', name: 'Vintage', class: 'sepia(30%) contrast(1.1) brightness(0.95) saturate(1.2)', canvasFilter: 'sepia(30%) contrast(1.1) brightness(0.95) saturate(1.2)' },
-  { id: 'warm', name: 'Warm', class: 'hue-rotate(-10deg) saturate(1.1)', canvasFilter: 'hue-rotate(-10deg) saturate(1.1)' },
-  { id: 'cool', name: 'Cool', class: 'hue-rotate(10deg) saturate(0.9) brightness(1.05)', canvasFilter: 'hue-rotate(10deg) saturate(0.9) brightness(1.05)' },
-  { id: 'cyberpunk', name: 'Cyberpunk', class: 'contrast(1.3) hue-rotate(180deg) saturate(1.5)', canvasFilter: 'contrast(1.3) hue-rotate(180deg) saturate(1.5)' },
+export interface FrameStyleSpec {
+  id: string;
+  category: Exclude<FrameCategory, 'all' | 'cms' | 'custom'>;
+  tagline: string;
+  bgColor: string;
+  bgGradient?: [string, string, string];
+  textColor: string;
+  mutedTextColor: string;
+  accentColor: string;
+  outerBorderColor: string;
+  slotBgColor: string;
+  slotBorderColor: string;
+  slotRadiusPercent: number; // percentage of slot width
+  targetPhotoAspect: number; // width / height per photo slot
+  exportWidth: number; // crisp HD export width in px
+  decoration: FrameDecoration;
+  defaultCaption: string;
+  fontStyle: 'sans' | 'serif' | 'mono';
+  headerTitle?: string;
+  headerMeta?: string;
+  footerSubtext?: string;
+}
+
+export const FRAME_CATEGORIES: Array<{ id: FrameCategory; label: string }> = [
+  { id: 'all', label: 'Semua' },
+  { id: 'strip', label: 'Strip' },
+  { id: 'grid', label: 'Grid' },
+  { id: 'polaroid', label: 'Polaroid' },
+  { id: 'editorial', label: 'Editorial' },
+  { id: 'aesthetic', label: 'Estetik' },
+  { id: 'custom', label: 'Custom PNG' },
 ];
+
+export const PHOTO_FILTERS: PhotoFilter[] = [
+  {
+    id: 'normal',
+    name: 'Normal',
+    cssFilter: 'none',
+    swatch: 'linear-gradient(135deg, #f4f4f5, #a1a1aa)',
+  },
+  {
+    id: 'bw-noir',
+    name: 'B&W Noir',
+    cssFilter: 'grayscale(100%) contrast(1.18) brightness(0.98)',
+    swatch: 'linear-gradient(135deg, #18181b, #e4e4e7)',
+  },
+  {
+    id: 'bw-soft',
+    name: 'Soft Mono',
+    cssFilter: 'grayscale(100%) contrast(0.95) brightness(1.06)',
+    swatch: 'linear-gradient(135deg, #52525b, #d4d4d8)',
+  },
+  {
+    id: 'warm-film',
+    name: 'Warm Film',
+    cssFilter: 'sepia(22%) saturate(1.22) contrast(1.06) brightness(1.02)',
+    swatch: 'linear-gradient(135deg, #f59e0b, #fde68a)',
+  },
+  {
+    id: 'vintage-90s',
+    name: 'Vintage 90s',
+    cssFilter: 'sepia(36%) contrast(0.92) brightness(1.04) saturate(0.88)',
+    swatch: 'linear-gradient(135deg, #a16207, #fef3c7)',
+  },
+  {
+    id: 'cool-cyan',
+    name: 'Cool Tone',
+    cssFilter: 'saturate(0.92) hue-rotate(8deg) contrast(1.05) brightness(1.03)',
+    swatch: 'linear-gradient(135deg, #0284c7, #bae6fd)',
+  },
+  {
+    id: 'sepia-classic',
+    name: 'Sepia',
+    cssFilter: 'sepia(78%) contrast(1.04) brightness(0.98)',
+    swatch: 'linear-gradient(135deg, #78350f, #d6b892)',
+  },
+  {
+    id: 'vivid-pop',
+    name: 'Vivid',
+    cssFilter: 'saturate(1.38) contrast(1.08) brightness(1.02)',
+    swatch: 'linear-gradient(135deg, #ec4899, #3b82f6)',
+  },
+  {
+    id: 'matte-fade',
+    name: 'Matte Fade',
+    cssFilter: 'contrast(0.88) brightness(1.07) saturate(0.82)',
+    swatch: 'linear-gradient(135deg, #71717a, #e4e4e7)',
+  },
+  {
+    id: 'golden-hour',
+    name: 'Golden',
+    cssFilter: 'sepia(18%) saturate(1.35) hue-rotate(-6deg) brightness(1.04)',
+    swatch: 'linear-gradient(135deg, #ea580c, #fcd34d)',
+  },
+];
+
+export const BUILTIN_FRAME_SPECS: Record<string, FrameStyleSpec> = {
+  'local-white-strip': {
+    id: 'local-white-strip',
+    category: 'strip',
+    tagline: '4 foto vertikal klasik putih',
+    bgColor: '#FFFFFF',
+    textColor: '#111113',
+    mutedTextColor: '#52525B',
+    accentColor: '#18181B',
+    outerBorderColor: '#E4E4E7',
+    slotBgColor: '#18181B',
+    slotBorderColor: 'rgba(24,24,27,0.12)',
+    slotRadiusPercent: 0.8,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1080,
+    decoration: 'minimal',
+    defaultCaption: 'SATRIABANYU STUDIO',
+    fontStyle: 'sans',
+    footerSubtext: 'CLASSIC STRIP EDITION',
+  },
+  'local-black-strip': {
+    id: 'local-black-strip',
+    category: 'strip',
+    tagline: '4 foto vertikal hitam matte',
+    bgColor: '#0E0E11',
+    textColor: '#FAFAFA',
+    mutedTextColor: '#A1A1AA',
+    accentColor: '#FAFAFA',
+    outerBorderColor: '#27272A',
+    slotBgColor: '#18181B',
+    slotBorderColor: 'rgba(255,255,255,0.14)',
+    slotRadiusPercent: 0.8,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1080,
+    decoration: 'minimal',
+    defaultCaption: 'SATRIABANYU STUDIO',
+    fontStyle: 'sans',
+    footerSubtext: 'OBSIDIAN EDITION',
+  },
+  'local-film-strip': {
+    id: 'local-film-strip',
+    category: 'strip',
+    tagline: '3 foto dengan lubang rol film 35mm',
+    bgColor: '#0A0A0C',
+    textColor: '#F59E0B',
+    mutedTextColor: '#D97706',
+    accentColor: '#F59E0B',
+    outerBorderColor: '#27272A',
+    slotBgColor: '#141417',
+    slotBorderColor: 'rgba(245,158,11,0.35)',
+    slotRadiusPercent: 1.2,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1080,
+    decoration: 'film-35mm',
+    defaultCaption: 'KODAK 400TX',
+    fontStyle: 'mono',
+    footerSubtext: '35MM ARCHIVE FILM',
+  },
+  'local-duo-strip': {
+    id: 'local-duo-strip',
+    category: 'strip',
+    tagline: '2 foto vertikal bersih & ringkas',
+    bgColor: '#F8F7F4',
+    textColor: '#18181B',
+    mutedTextColor: '#52525B',
+    accentColor: '#27272A',
+    outerBorderColor: '#DFDDD6',
+    slotBgColor: '#18181B',
+    slotBorderColor: 'rgba(24,24,27,0.1)',
+    slotRadiusPercent: 1.5,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1080,
+    decoration: 'minimal',
+    defaultCaption: 'DUO MOMENT',
+    fontStyle: 'sans',
+    footerSubtext: 'TWO-SHOT SERIES',
+  },
+  'local-grid': {
+    id: 'local-grid',
+    category: 'grid',
+    tagline: 'Grid 2x2 klasik studio putih',
+    bgColor: '#FFFFFF',
+    textColor: '#111113',
+    mutedTextColor: '#52525B',
+    accentColor: '#18181B',
+    outerBorderColor: '#E4E4E7',
+    slotBgColor: '#18181B',
+    slotBorderColor: 'rgba(24,24,27,0.12)',
+    slotRadiusPercent: 1,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1400,
+    decoration: 'minimal',
+    defaultCaption: 'SATRIABANYU STUDIO',
+    fontStyle: 'sans',
+    footerSubtext: 'QUAD GRID 2X2',
+  },
+  'local-double-6': {
+    id: 'local-double-6',
+    category: 'grid',
+    tagline: '6 foto kolase double strip 2x3',
+    bgColor: '#FAFAFA',
+    textColor: '#111113',
+    mutedTextColor: '#52525B',
+    accentColor: '#18181B',
+    outerBorderColor: '#D4D4D8',
+    slotBgColor: '#18181B',
+    slotBorderColor: 'rgba(24,24,27,0.14)',
+    slotRadiusPercent: 0.8,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1400,
+    decoration: 'minimal',
+    defaultCaption: 'SIX SHOT BOOTH',
+    fontStyle: 'mono',
+    footerSubtext: 'DOUBLE STRIP 2X3',
+  },
+  'local-gallery-mat': {
+    id: 'local-gallery-mat',
+    category: 'grid',
+    tagline: 'Bingkai pameran museum dengan tepi tebal',
+    bgColor: '#F3EFE6',
+    textColor: '#1C1917',
+    mutedTextColor: '#57534E',
+    accentColor: '#44403C',
+    outerBorderColor: '#D6CFC2',
+    slotBgColor: '#1C1917',
+    slotBorderColor: '#A8A29E',
+    slotRadiusPercent: 0,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1400,
+    decoration: 'gallery-mat',
+    defaultCaption: 'EXHIBITION PLATE 04',
+    fontStyle: 'serif',
+    footerSubtext: 'ARCHIVAL PRINT SERIES',
+  },
+  'local-contact-sheet': {
+    id: 'local-contact-sheet',
+    category: 'editorial',
+    tagline: 'Contact sheet ruang gelap dengan crop marks',
+    bgColor: '#111114',
+    textColor: '#F4F4F5',
+    mutedTextColor: '#A1A1AA',
+    accentColor: '#E4E4E7',
+    outerBorderColor: '#27272A',
+    slotBgColor: '#18181B',
+    slotBorderColor: 'rgba(255,255,255,0.22)',
+    slotRadiusPercent: 0,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1400,
+    decoration: 'contact-sheet',
+    defaultCaption: 'PROOF SHEET // 120MM',
+    fontStyle: 'mono',
+    headerTitle: 'CONTACT SHEET NO. 01',
+    headerMeta: 'ISO 400 / STUDIO LAB',
+    footerSubtext: 'DO NOT DUPLICATE',
+  },
+  'local-editorial-press': {
+    id: 'local-editorial-press',
+    category: 'editorial',
+    tagline: 'Koran editorial dengan tajuk serif & garis ganda',
+    bgColor: '#F4EFE6',
+    textColor: '#18181B',
+    mutedTextColor: '#52525B',
+    accentColor: '#18181B',
+    outerBorderColor: '#CFC7B8',
+    slotBgColor: '#1C1917',
+    slotBorderColor: '#18181B',
+    slotRadiusPercent: 0,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1080,
+    decoration: 'editorial-press',
+    defaultCaption: 'THE DAILY SNAP',
+    fontStyle: 'serif',
+    headerTitle: 'THE DAILY SNAP',
+    headerMeta: 'VOL. 01 • SPECIAL EDITION',
+    footerSubtext: 'PRINTED IN DIGITAL STUDIO',
+  },
+  'local-receipt-print': {
+    id: 'local-receipt-print',
+    category: 'editorial',
+    tagline: 'Struk thermal monospaced lengkap dengan barcode',
+    bgColor: '#F7F6F2',
+    textColor: '#18181B',
+    mutedTextColor: '#52525B',
+    accentColor: '#18181B',
+    outerBorderColor: '#D4D4D8',
+    slotBgColor: '#18181B',
+    slotBorderColor: '#27272A',
+    slotRadiusPercent: 0,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1080,
+    decoration: 'receipt',
+    defaultCaption: 'PHOTO RECEIPT',
+    fontStyle: 'mono',
+    headerTitle: '*** PHOTO BOOTH ***',
+    headerMeta: 'ORDER #0206 • PAID IN SMILES',
+    footerSubtext: 'THANK YOU FOR VISITING',
+  },
+  'local-camcorder-rec': {
+    id: 'local-camcorder-rec',
+    category: 'editorial',
+    tagline: 'Viewfinder kamera camcorder retro REC HUD',
+    bgColor: '#0B0D10',
+    textColor: '#FAFAFA',
+    mutedTextColor: '#A1A1AA',
+    accentColor: '#EF4444',
+    outerBorderColor: '#27272A',
+    slotBgColor: '#14171D',
+    slotBorderColor: 'rgba(255,255,255,0.2)',
+    slotRadiusPercent: 0.5,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1320,
+    decoration: 'camcorder',
+    defaultCaption: 'TAPE 01 // SP 60FPS',
+    fontStyle: 'mono',
+    headerTitle: 'REC',
+    headerMeta: 'BAT 98% • HDV',
+    footerSubtext: 'TC 00:01:24:08',
+  },
+  'local-polaroid': {
+    id: 'local-polaroid',
+    category: 'polaroid',
+    tagline: 'Polaroid instan klasik dengan ruang tulisan bawah',
+    bgColor: '#FAF7F0',
+    textColor: '#1C1917',
+    mutedTextColor: '#57534E',
+    accentColor: '#292524',
+    outerBorderColor: '#E5DEC9',
+    slotBgColor: '#1C1917',
+    slotBorderColor: 'rgba(28,25,23,0.14)',
+    slotRadiusPercent: 0.4,
+    targetPhotoAspect: 1,
+    exportWidth: 1200,
+    decoration: 'polaroid',
+    defaultCaption: 'Instant Memories',
+    fontStyle: 'serif',
+    footerSubtext: 'POLAROID 600',
+  },
+  'local-polaroid-noir': {
+    id: 'local-polaroid-noir',
+    category: 'polaroid',
+    tagline: 'Polaroid edisi gelap hitam elegan',
+    bgColor: '#141418',
+    textColor: '#F4F4F5',
+    mutedTextColor: '#A1A1AA',
+    accentColor: '#FAFAFA',
+    outerBorderColor: '#2E2E35',
+    slotBgColor: '#09090B',
+    slotBorderColor: 'rgba(255,255,255,0.16)',
+    slotRadiusPercent: 0.4,
+    targetPhotoAspect: 1,
+    exportWidth: 1200,
+    decoration: 'polaroid',
+    defaultCaption: 'After Hours',
+    fontStyle: 'serif',
+    footerSubtext: 'NOIR INSTANT FILM',
+  },
+  'local-instax-duo': {
+    id: 'local-instax-duo',
+    category: 'polaroid',
+    tagline: 'Kartu instan 2 foto bersudut membulat',
+    bgColor: '#F4F5F7',
+    textColor: '#18181B',
+    mutedTextColor: '#52525B',
+    accentColor: '#27272A',
+    outerBorderColor: '#D4D4D8',
+    slotBgColor: '#18181B',
+    slotBorderColor: 'rgba(24,24,27,0.1)',
+    slotRadiusPercent: 3.5,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1080,
+    decoration: 'polaroid',
+    defaultCaption: 'Mini Duo Snap',
+    fontStyle: 'serif',
+    footerSubtext: 'INSTAX SERIES',
+  },
+  'local-blush-ribbon': {
+    id: 'local-blush-ribbon',
+    category: 'aesthetic',
+    tagline: 'Kertas pastel blush dengan aksen pita lembut',
+    bgColor: '#FDF2F4',
+    textColor: '#881337',
+    mutedTextColor: '#9F1239',
+    accentColor: '#E11D48',
+    outerBorderColor: '#F5C2D0',
+    slotBgColor: '#2A1820',
+    slotBorderColor: '#F4B4C6',
+    slotRadiusPercent: 2.5,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1080,
+    decoration: 'blush-ribbon',
+    defaultCaption: 'SWEET MEMORIES',
+    fontStyle: 'serif',
+    footerSubtext: 'RIBBON EDITION',
+  },
+  'local-sky-blueprint': {
+    id: 'local-sky-blueprint',
+    category: 'aesthetic',
+    tagline: 'Grid blueprint arsitektur biru tua & garis teknis',
+    bgColor: '#0F294A',
+    textColor: '#F8FAFC',
+    mutedTextColor: '#BAE6FD',
+    accentColor: '#7DD3FC',
+    outerBorderColor: '#1E4976',
+    slotBgColor: '#0A1C33',
+    slotBorderColor: 'rgba(186,230,253,0.55)',
+    slotRadiusPercent: 0,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1400,
+    decoration: 'blueprint',
+    defaultCaption: 'FIG. 01 // STUDIO PLAN',
+    fontStyle: 'mono',
+    headerTitle: 'BLUEPRINT ARCHIVE',
+    headerMeta: 'SCALE 1:1 • REV 2026',
+    footerSubtext: 'TECHNICAL GRID 2X2',
+  },
+  'local-y2k-chrome': {
+    id: 'local-y2k-chrome',
+    category: 'aesthetic',
+    tagline: 'Gradien perak metalik Y2K dengan bintang sudut',
+    bgColor: '#E4E4E7',
+    bgGradient: ['#D4D4D8', '#FAFAFA', '#C4C4CC'],
+    textColor: '#18181B',
+    mutedTextColor: '#3F3F46',
+    accentColor: '#18181B',
+    outerBorderColor: '#A1A1AA',
+    slotBgColor: '#18181B',
+    slotBorderColor: '#27272A',
+    slotRadiusPercent: 2,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1080,
+    decoration: 'chrome-y2k',
+    defaultCaption: 'CHROME EDITION',
+    fontStyle: 'mono',
+    headerTitle: 'SILVER 2000',
+    footerSubtext: 'METALLIC STRIP',
+  },
+  'local-linen-cream': {
+    id: 'local-linen-cream',
+    category: 'aesthetic',
+    tagline: 'Kertas linen krem hangat dengan tipografi serif',
+    bgColor: '#EFECE3',
+    textColor: '#2C3028',
+    mutedTextColor: '#555B4E',
+    accentColor: '#4A5243',
+    outerBorderColor: '#CFC9B8',
+    slotBgColor: '#1E201C',
+    slotBorderColor: '#B8B1A0',
+    slotRadiusPercent: 1,
+    targetPhotoAspect: 4 / 3,
+    exportWidth: 1080,
+    decoration: 'linen-serif',
+    defaultCaption: 'Quiet Afternoon',
+    fontStyle: 'serif',
+    headerTitle: 'ATELIER NO. 03',
+    footerSubtext: 'LINEN ARCHIVE',
+  },
+};
 
 export const LOCAL_TEMPLATES: PhotoboothTemplate[] = [
   {
@@ -43,20 +520,47 @@ export const LOCAL_TEMPLATES: PhotoboothTemplate[] = [
     maxPhotos: 4,
     layout: 'strip',
     isActive: true,
+    topPadding: 3.8,
+    bottomPadding: 11,
+    sidePadding: 6,
+    rowSpacing: 2,
+    colSpacing: 4,
   },
   {
     _id: 'local-black-strip',
-    name: 'Classic Black Strip',
+    name: 'Obsidian Black Strip',
     maxPhotos: 4,
     layout: 'strip',
     isActive: true,
+    topPadding: 3.8,
+    bottomPadding: 11,
+    sidePadding: 6,
+    rowSpacing: 2,
+    colSpacing: 4,
   },
   {
     _id: 'local-film-strip',
-    name: 'Retro Film Strip',
+    name: '35mm Film Roll',
     maxPhotos: 3,
     layout: 'strip',
     isActive: true,
+    topPadding: 5,
+    bottomPadding: 11,
+    sidePadding: 11,
+    rowSpacing: 2.8,
+    colSpacing: 4,
+  },
+  {
+    _id: 'local-duo-strip',
+    name: 'Minimal Duo Strip',
+    maxPhotos: 2,
+    layout: 'strip',
+    isActive: true,
+    topPadding: 5,
+    bottomPadding: 15,
+    sidePadding: 7,
+    rowSpacing: 3.2,
+    colSpacing: 4,
   },
   {
     _id: 'local-grid',
@@ -64,60 +568,214 @@ export const LOCAL_TEMPLATES: PhotoboothTemplate[] = [
     maxPhotos: 4,
     layout: 'grid',
     isActive: true,
+    topPadding: 5,
+    bottomPadding: 14,
+    sidePadding: 5,
+    rowSpacing: 3,
+    colSpacing: 3,
   },
   {
-    _id: 'local-polaroid',
-    name: 'Polaroid Single',
+    _id: 'local-double-6',
+    name: 'Double Strip 2x3',
+    maxPhotos: 6,
+    layout: 'grid',
+    isActive: true,
+    topPadding: 4.5,
+    bottomPadding: 11.5,
+    sidePadding: 5,
+    rowSpacing: 2.4,
+    colSpacing: 3,
+  },
+  {
+    _id: 'local-gallery-mat',
+    name: 'Gallery Museum Mat',
+    maxPhotos: 4,
+    layout: 'grid',
+    isActive: true,
+    topPadding: 8,
+    bottomPadding: 17,
+    sidePadding: 8,
+    rowSpacing: 4,
+    colSpacing: 4,
+  },
+  {
+    _id: 'local-contact-sheet',
+    name: 'Archival Contact Sheet',
+    maxPhotos: 4,
+    layout: 'grid',
+    isActive: true,
+    topPadding: 11,
+    bottomPadding: 14,
+    sidePadding: 6,
+    rowSpacing: 4.5,
+    colSpacing: 3.5,
+  },
+  {
+    _id: 'local-editorial-press',
+    name: 'Editorial Press',
+    maxPhotos: 3,
+    layout: 'strip',
+    isActive: true,
+    topPadding: 13.5,
+    bottomPadding: 11.5,
+    sidePadding: 7,
+    rowSpacing: 2.5,
+    colSpacing: 4,
+  },
+  {
+    _id: 'local-receipt-print',
+    name: 'Thermal Receipt',
+    maxPhotos: 3,
+    layout: 'strip',
+    isActive: true,
+    topPadding: 11.5,
+    bottomPadding: 17.5,
+    sidePadding: 7.5,
+    rowSpacing: 2.2,
+    colSpacing: 4,
+  },
+  {
+    _id: 'local-camcorder-rec',
+    name: 'Camcorder REC',
     maxPhotos: 1,
     layout: 'single',
     isActive: true,
-  }
+    topPadding: 12,
+    bottomPadding: 14,
+    sidePadding: 6,
+    rowSpacing: 0,
+    colSpacing: 0,
+  },
+  {
+    _id: 'local-polaroid',
+    name: 'Vintage Polaroid',
+    maxPhotos: 1,
+    layout: 'single',
+    isActive: true,
+    topPadding: 6.5,
+    bottomPadding: 23.5,
+    sidePadding: 6.5,
+    rowSpacing: 0,
+    colSpacing: 0,
+  },
+  {
+    _id: 'local-polaroid-noir',
+    name: 'Polaroid Noir',
+    maxPhotos: 1,
+    layout: 'single',
+    isActive: true,
+    topPadding: 6.5,
+    bottomPadding: 23.5,
+    sidePadding: 6.5,
+    rowSpacing: 0,
+    colSpacing: 0,
+  },
+  {
+    _id: 'local-instax-duo',
+    name: 'Instax Mini Duo',
+    maxPhotos: 2,
+    layout: 'strip',
+    isActive: true,
+    topPadding: 5.5,
+    bottomPadding: 18,
+    sidePadding: 7.5,
+    rowSpacing: 3,
+    colSpacing: 4,
+  },
+  {
+    _id: 'local-blush-ribbon',
+    name: 'Blush Ribbon',
+    maxPhotos: 4,
+    layout: 'strip',
+    isActive: true,
+    topPadding: 7.5,
+    bottomPadding: 11,
+    sidePadding: 7,
+    rowSpacing: 2,
+    colSpacing: 4,
+  },
+  {
+    _id: 'local-sky-blueprint',
+    name: 'Blueprint Technical',
+    maxPhotos: 4,
+    layout: 'grid',
+    isActive: true,
+    topPadding: 10.5,
+    bottomPadding: 14,
+    sidePadding: 6,
+    rowSpacing: 3.5,
+    colSpacing: 3.5,
+  },
+  {
+    _id: 'local-y2k-chrome',
+    name: 'Y2K Chrome Silver',
+    maxPhotos: 4,
+    layout: 'strip',
+    isActive: true,
+    topPadding: 7,
+    bottomPadding: 11,
+    sidePadding: 6.5,
+    rowSpacing: 2,
+    colSpacing: 4,
+  },
+  {
+    _id: 'local-linen-cream',
+    name: 'Warm Linen Cream',
+    maxPhotos: 3,
+    layout: 'strip',
+    isActive: true,
+    topPadding: 9,
+    bottomPadding: 12,
+    sidePadding: 7.5,
+    rowSpacing: 2.6,
+    colSpacing: 4,
+  },
 ];
 
 export const DEFAULT_PADDINGS = {
   strip: {
-    topPadding: 3,
-    bottomPadding: 10,
-    sidePadding: 4,
+    topPadding: 4,
+    bottomPadding: 11,
+    sidePadding: 6,
     rowSpacing: 2,
     colSpacing: 4,
   },
   grid: {
     topPadding: 5,
-    bottomPadding: 15,
-    sidePadding: 4,
+    bottomPadding: 14,
+    sidePadding: 5,
     rowSpacing: 3,
     colSpacing: 3,
   },
   single: {
-    topPadding: 6,
-    bottomPadding: 22,
-    sidePadding: 6,
+    topPadding: 6.5,
+    bottomPadding: 23.5,
+    sidePadding: 6.5,
     rowSpacing: 0,
     colSpacing: 0,
-  }
+  },
 };
 
 export const DEFAULT_CUSTOM_PADDINGS = {
   strip: {
     topPadding: 3,
-    bottomPadding: 4,
-    sidePadding: 2,
-    rowSpacing: 1.5,
-    colSpacing: 2,
+    bottomPadding: 8,
+    sidePadding: 3,
+    rowSpacing: 2.5,
+    colSpacing: 3,
   },
   grid: {
     topPadding: 3,
-    bottomPadding: 4,
-    sidePadding: 2,
-    rowSpacing: 1.5,
-    colSpacing: 2,
+    bottomPadding: 8,
+    sidePadding: 3,
+    rowSpacing: 2.5,
+    colSpacing: 3,
   },
   single: {
-    topPadding: 3,
-    bottomPadding: 4,
-    sidePadding: 2,
+    topPadding: 4,
+    bottomPadding: 10,
+    sidePadding: 4,
     rowSpacing: 0,
     colSpacing: 0,
-  }
+  },
 };

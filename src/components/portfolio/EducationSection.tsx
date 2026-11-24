@@ -1,190 +1,157 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronDown } from 'lucide-react';
-import { useScrollFade } from '@/hooks/useScrollFade';
+import { AnimatePresence, motion } from 'motion/react';
 import type { Education } from '@/types/portfolio';
 
 interface EducationSectionProps {
   education: Education[];
+  indexLabel?: string;
 }
 
-// Format date to YYYY (year only)
+const EASE = [0.21, 0.47, 0.32, 0.98] as [number, number, number, number];
+
 const formatDate = (dateString: string): string => {
   if (!dateString) return '';
-  // If already a 4-digit year, return as is
   if (/^\d{4}$/.test(dateString)) return dateString;
-  // Otherwise extract year
   const date = new Date(dateString);
-  return String(date.getFullYear());
+  return Number.isNaN(date.getTime()) ? dateString : String(date.getFullYear());
 };
 
-export function EducationSection({ education }: EducationSectionProps) {
+export function EducationSection({
+  education,
+  indexLabel = '03',
+}: EducationSectionProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const { ref, isVisible } = useScrollFade();
 
   const toggleExpand = (id: string) => {
-    setExpandedIds(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
       } else {
-        newSet.add(id);
+        next.add(id);
       }
-      return newSet;
+      return next;
     });
   };
 
-  if (!education || education.length === 0) {
-    return (
-      <section>
-        <h2 className="text-lg font-semibold mb-6 tracking-tight">Education</h2>
-        <div className="text-sm text-zinc-500 italic">
-          No education added yet.
-        </div>
-      </section>
-    );
-  }
-
   return (
-    <section 
-      ref={ref}
-      className={`transition-all duration-700 ease-out ${
-        isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
-      }`}
+    <motion.section
+      id="education"
+      aria-labelledby="education-heading"
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.15 }}
+      transition={{ duration: 0.6, ease: EASE }}
+      className="space-y-6"
     >
-      <h2 className="text-lg font-semibold mb-6 tracking-tight">Education</h2>
-      
-      {/* Mobile Layout - Stacked */}
-      <div className="flex flex-col gap-5 md:hidden">
-        {education.map((edu) => {
-          const isExpanded = expandedIds.has(edu._id);
-          const hasDetails = edu.description || (edu.achievements && edu.achievements.length > 0);
-
-          return (
-            <div key={edu._id} className="flex flex-col gap-0.5">
-              {/* Date Range */}
-              <div className="text-sm text-zinc-500">
-                {formatDate(edu.startDate)} – {edu.endDate ? formatDate(edu.endDate) : 'present'}
-              </div>
-
-              {/* Degree and Field */}
-              <h3 className="font-semibold text-base text-zinc-100">
-                {edu.degree}
-                {edu.fieldOfStudy && ` in ${edu.fieldOfStudy}`}
-              </h3>
-
-              {/* Institution */}
-              <p className="text-sm text-zinc-400">
-                {edu.institution}
-              </p>
-
-              {/* GPA and Honors */}
-              {(edu.gpa || edu.honors) && (
-                <p className="text-sm text-zinc-500">
-                  {edu.gpa && `GPA: ${edu.gpa}`}
-                  {edu.gpa && edu.honors && ' • '}
-                  {edu.honors}
-                </p>
-              )}
-
-              {/* Mobile Expansion Toggle */}
-              {hasDetails && (
-                <div className="mt-1">
-                  <button
-                    onClick={() => toggleExpand(edu._id)}
-                    className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-                  >
-                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                    <span>{isExpanded ? 'Less' : 'More'}</span>
-                  </button>
-
-                  {isExpanded && (
-                    <div className="mt-2 flex flex-col gap-3">
-                      {edu.description && (
-                        <p className="text-sm text-zinc-400 leading-relaxed italic">
-                          {edu.description}
-                        </p>
-                      )}
-                      {edu.achievements && edu.achievements.length > 0 && (
-                        <ul className="ml-4 space-y-1 text-sm text-zinc-400">
-                          {edu.achievements.map((achievement, i) => (
-                            <li key={i} className="flex gap-2">
-                              <span className="text-zinc-600">•</span>
-                              <span>{achievement}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+      <div className="space-y-1.5">
+        <span className="block text-xs font-medium tabular-nums text-[#94949E]">
+          {indexLabel}
+        </span>
+        <h2
+          id="education-heading"
+          className="text-2xl font-bold tracking-[-0.025em] text-white sm:text-3xl"
+        >
+          Education
+        </h2>
       </div>
 
-      {/* Desktop Layout - Side by side */}
-      <div className="hidden md:flex flex-col gap-8">
-        {education.map((edu) => (
-          <div key={edu._id} className="flex gap-12">
-            {/* Date - Left Side */}
-            <div className="w-28 shrink-0 text-sm text-zinc-500 whitespace-nowrap">
-              {formatDate(edu.startDate)} - {edu.endDate ? formatDate(edu.endDate) : 'present'}
-            </div>
+      {!education || education.length === 0 ? (
+        <p className="text-sm text-[#94949E]">
+          No education entries have been published yet.
+        </p>
+      ) : (
+        <div className="divide-y divide-white/10">
+          {education.map((edu) => {
+            const isExpanded = expandedIds.has(edu._id);
+            const hasDetails = Boolean(
+              edu.description || (edu.achievements && edu.achievements.length > 0)
+            );
+            const detailsId = `education-details-${edu._id}`;
 
-            {/* Content - Right Side */}
-            <div className="flex-1 flex flex-col gap-5">
-              {/* Degree and Institution */}
-              <div>
-                <h3 className="font-semibold text-base text-zinc-100">
-                  {edu.degree}
-                  {edu.fieldOfStudy && ` in ${edu.fieldOfStudy}`}
-                </h3>
-                <p className="text-sm text-zinc-400 mt-0.5">
-                  {edu.institution}
-                </p>
-              </div>
-
-              {/* GPA and Honors */}
-              {(edu.gpa || edu.honors) && (
-                <div className="flex flex-wrap gap-3 text-sm">
-                  {edu.gpa && (
-                    <span className="text-zinc-400">
-                      GPA: <span className="text-zinc-300 font-medium">{edu.gpa}</span>
-                    </span>
-                  )}
-                  {edu.honors && (
-                    <span className="text-zinc-400">
-                      • <span className="text-zinc-300">{edu.honors}</span>
-                    </span>
-                  )}
+            return (
+              <article key={edu._id} className="space-y-2 py-6 first:pt-2 last:pb-0">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <h3 className="text-base font-semibold leading-snug text-white sm:text-[17px]">
+                    {edu.degree}
+                    {edu.fieldOfStudy && ` in ${edu.fieldOfStudy}`}
+                  </h3>
+                  <p className="shrink-0 text-xs tabular-nums text-[#94949E]">
+                    {formatDate(edu.startDate)} -{' '}
+                    {edu.endDate ? formatDate(edu.endDate) : 'Present'}
+                  </p>
                 </div>
-              )}
 
-              {/* Description */}
-              {edu.description && (
-                <p className="text-sm text-zinc-400 leading-relaxed">
-                  {edu.description}
-                </p>
-              )}
+                <p className="text-sm text-zinc-400">{edu.institution}</p>
 
-              {/* Achievements */}
-              {edu.achievements && edu.achievements.length > 0 && (
-                <ul className="ml-4 space-y-1 text-sm text-zinc-400">
-                  {edu.achievements.map((achievement, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className="text-zinc-600">•</span>
-                      <span>{achievement}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
+                {(edu.gpa || edu.honors) && (
+                  <p className="text-xs text-[#94949E]">
+                    {edu.gpa && `GPA ${edu.gpa}`}
+                    {edu.gpa && edu.honors && ' · '}
+                    {edu.honors}
+                  </p>
+                )}
+
+                {hasDetails && (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => toggleExpand(edu._id)}
+                      aria-expanded={isExpanded}
+                      aria-controls={detailsId}
+                      className="-ml-2 inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-2 text-xs font-medium text-zinc-200 transition-colors hover:bg-white/[0.06] hover:text-white"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                      >
+                        <path d="m6 9 6 6 6-6" />
+                      </svg>
+                      <span>{isExpanded ? 'Hide details' : 'Show details'}</span>
+                    </button>
+
+                    <AnimatePresence initial={false}>
+                      {isExpanded && (
+                        <motion.div
+                          id={detailsId}
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          transition={{ duration: 0.25, ease: EASE }}
+                          className="space-y-3 overflow-hidden pt-2"
+                        >
+                          {edu.description && (
+                            <p className="text-sm leading-relaxed text-zinc-400">
+                              {edu.description}
+                            </p>
+                          )}
+                          {edu.achievements && edu.achievements.length > 0 && (
+                            <ul className="list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-zinc-400 marker:text-[#94949E]">
+                              {edu.achievements.map((achievement, idx) => (
+                                <li key={idx}>{achievement}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </motion.section>
   );
 }

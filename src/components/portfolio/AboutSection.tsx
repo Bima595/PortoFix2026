@@ -1,60 +1,44 @@
 'use client';
 
 import { useState } from 'react';
-import { useScrollFade } from '@/hooks/useScrollFade';
-import { ChevronDown, ChevronUp } from 'lucide-react';
 
 interface AboutSectionProps {
   description: string;
 }
 
 export function AboutSection({ description }: AboutSectionProps) {
-  const { ref, isVisible } = useScrollFade();
   const [isExpanded, setIsExpanded] = useState(false);
-  
-  // Truncate to ~120 characters for mobile
-  const truncateLength = 120;
+
+  if (!description) {
+    return null;
+  }
+
+  const truncateLength = 240;
   const shouldTruncate = description.length > truncateLength;
-  const displayText = isExpanded || !shouldTruncate 
-    ? description 
-    : description.slice(0, truncateLength).trim() + '...';
+  const mobileText =
+    isExpanded || !shouldTruncate
+      ? description
+      : `${description.slice(0, truncateLength).trimEnd()}...`;
 
   return (
-    <section
-      ref={ref}
-      className={`transition-all duration-700 ease-out ${
-        isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
-      }`}
-    >
-      {/* Mobile: Collapsible text */}
-      <div className="md:hidden">
-        <p className="text-sm text-zinc-400 leading-relaxed">
-          {displayText}
-        </p>
+    <div className="max-w-[66ch]">
+      <div className="sm:hidden">
+        <p className="text-[15px] leading-[1.75] text-[#A1A1AA]">{mobileText}</p>
         {shouldTruncate && (
           <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="mt-2 flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+            type="button"
+            onClick={() => setIsExpanded((prev) => !prev)}
+            aria-expanded={isExpanded}
+            className="mt-1 -ml-2 inline-flex min-h-[44px] items-center px-2 text-sm font-medium text-white underline-offset-4 hover:underline"
           >
-            {isExpanded ? (
-              <>
-                <ChevronUp className="w-3 h-3" />
-                Show Less
-              </>
-            ) : (
-              <>
-                <ChevronDown className="w-3 h-3" />
-                Show More
-              </>
-            )}
+            {isExpanded ? 'Show less' : 'Read full bio'}
           </button>
         )}
       </div>
-      
-      {/* Desktop: Full text */}
-      <p className="hidden md:block text-sm text-zinc-400 leading-relaxed">
+
+      <p className="hidden text-base leading-[1.78] text-[#A1A1AA] sm:block sm:text-[16.5px]">
         {description}
       </p>
-    </section>
+    </div>
   );
 }

@@ -1,53 +1,76 @@
 'use client';
 
-import { useScrollFade } from '@/hooks/useScrollFade';
+import { motion } from 'motion/react';
 import type { Skill } from '@/types/portfolio';
 
 interface SkillsSectionProps {
   skills: Skill[];
+  indexLabel?: string;
 }
 
-export function SkillsSection({ skills }: SkillsSectionProps) {
-  const { ref, isVisible } = useScrollFade();
+const EASE = [0.21, 0.47, 0.32, 0.98] as [number, number, number, number];
 
-  if (!skills || skills.length === 0) {
-    return (
-      <section>
-        <h2 className="text-lg font-semibold mb-6 tracking-tight">Skills</h2>
-        <div className="text-sm text-zinc-500 italic">
-          No skills added yet.
-        </div>
-      </section>
-    );
-  }
-
+export function SkillsSection({ skills, indexLabel = '05' }: SkillsSectionProps) {
   return (
-    <section 
-      ref={ref}
-      className={`transition-all duration-700 ease-out ${
-        isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
-      }`}
+    <motion.section
+      id="skills"
+      aria-labelledby="skills-heading"
+      initial={{ opacity: 0, y: 24, scale: 0.99 }}
+      whileInView={{ opacity: 1, y: 0, scale: 1 }}
+      viewport={{ once: true, amount: 0.15 }}
+      transition={{ duration: 0.65, ease: EASE }}
+      className="rounded-3xl border border-white/20 bg-[#F4F4F5] p-6 text-[#09090B] sm:p-10 md:p-12"
     >
-      <h2 className="text-lg font-semibold mb-8 tracking-tight">Skills</h2>
-      <div className="flex flex-col gap-4">
-        {skills.map((skillGroup) => (
-          <div key={skillGroup._id} className="flex flex-col gap-2">
-            <h3 className="text-sm font-semibold text-zinc-300">
-              {skillGroup.category}
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {skillGroup.skills.map((skill, index) => (
-                <span
-                  key={index}
-                  className="text-xs px-3 py-1.5 rounded-md bg-zinc-900 text-zinc-300 border border-zinc-800"
-                >
-                  {skill}
-                </span>
-              ))}
-            </div>
-          </div>
-        ))}
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-zinc-950/15 pb-6">
+        <div className="space-y-1.5">
+          <span className="block text-xs font-semibold tabular-nums text-[#52525B]">
+            {indexLabel}
+          </span>
+          <h2
+            id="skills-heading"
+            className="text-3xl font-bold tracking-[-0.03em] text-[#09090B] sm:text-4xl"
+          >
+            Skills &amp; Stack
+          </h2>
+        </div>
+
+        {skills && skills.length > 0 && (
+          <p className="text-xs font-medium tabular-nums text-[#52525B] sm:text-sm">
+            {String(skills.length).padStart(2, '0')}{' '}
+            {skills.length === 1 ? 'Category' : 'Categories'}
+          </p>
+        )}
       </div>
-    </section>
+
+      {!skills || skills.length === 0 ? (
+        <p className="pt-6 text-sm text-[#52525B]">
+          No skills have been published yet.
+        </p>
+      ) : (
+        <dl className="divide-y divide-zinc-950/15 pt-2">
+          {skills.map((skillGroup, idx) => (
+            <motion.div
+              key={skillGroup._id}
+              initial={{ opacity: 0, y: 12 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.2 }}
+              transition={{
+                duration: 0.45,
+                delay: Math.min(idx * 0.05, 0.2),
+                ease: EASE,
+              }}
+              className="grid grid-cols-1 gap-2 py-5 last:pb-0 sm:grid-cols-[200px_minmax(0,1fr)] sm:items-baseline sm:gap-8 sm:py-6"
+            >
+              <dt className="text-sm font-semibold tracking-[-0.01em] text-[#09090B] sm:text-base">
+                {skillGroup.category}
+              </dt>
+              <dd className="text-sm leading-relaxed text-[#3F3F46] sm:text-[15px]">
+                {skillGroup.skills.join(' · ')}
+              </dd>
+            </motion.div>
+          ))}
+        </dl>
+      )}
+    </motion.section>
   );
 }

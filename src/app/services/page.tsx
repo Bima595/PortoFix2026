@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import { HeroSection } from './components/HeroSection';
 import { BenefitsSection } from './components/BenefitsSection';
 import { MottoSection } from './components/MottoSection';
@@ -8,6 +9,17 @@ import { FAQSection } from './components/FAQSection';
 import { getSideProjects, getStats, getProjects, getFields, getPricing, getBio } from '@/lib/sanity/api';
 import { ServicesDock } from './components/ServicesDock';
 import { ContactCTASection } from './components/ContactCTASection';
+
+export const revalidate = 60;
+
+export const metadata: Metadata = {
+  title: 'Web Development Services',
+  description:
+    'Jasa pembuatan website, aplikasi web modern, landing page, dan sistem full stack oleh Satria Abimanyu Putra Wijayatama (Satriabmnyu).',
+  alternates: {
+    canonical: '/services',
+  },
+};
 
 export default async function ServicesPage() {
   // Fetch all data from Sanity CMS

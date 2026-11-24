@@ -133,10 +133,5 @@ export const photoboothTemplateQuery = `*[_type == "photoboothTemplate" && isAct
   frameImage,
   maxPhotos,
   layout,
-  isActive,
-  topPadding,
-  bottomPadding,
-  sidePadding,
-  rowSpacing,
-  colSpacing
+  isActive
 }`;

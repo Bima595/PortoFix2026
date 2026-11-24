@@ -13,15 +13,22 @@ interface ImageLightboxProps {
   onPrev: () => void;
 }
 
-export function ImageLightbox({ isOpen, images, currentIndex, onClose, onNext, onPrev }: ImageLightboxProps) {
+export function ImageLightbox({
+  isOpen,
+  images,
+  currentIndex,
+  onClose,
+  onNext,
+  onPrev,
+}: ImageLightboxProps) {
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
     } else {
-      document.body.style.overflow = 'unset';
+      document.body.style.overflow = '';
     }
     return () => {
-      document.body.style.overflow = 'unset';
+      document.body.style.overflow = '';
     };
   }, [isOpen]);
 
@@ -44,56 +51,51 @@ export function ImageLightbox({ isOpen, images, currentIndex, onClose, onNext, o
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={currentImage.alt}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/92 p-4 sm:p-8"
       onClick={onClose}
     >
-      {/* Close button */}
       <button
+        type="button"
         onClick={onClose}
-        className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors z-10"
-        aria-label="Close"
+        className="absolute top-4 right-4 z-10 inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full border border-white/15 bg-zinc-900/90 text-white transition-colors hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+        aria-label="Close preview"
       >
-        <X className="w-6 h-6 text-white" />
+        <X className="h-5 w-5" aria-hidden="true" />
       </button>
 
-      {/* Previous button */}
       {showNavigation && (
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             onPrev();
           }}
-          className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 hover:bg-white/20 transition-colors z-10"
+          className="absolute top-1/2 left-4 z-10 inline-flex min-h-[44px] min-w-[44px] -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-zinc-900/90 text-white transition-colors hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
           aria-label="Previous image"
         >
-          <ChevronLeft className="w-6 h-6 text-white" />
+          <ChevronLeft className="h-5 w-5" aria-hidden="true" />
         </button>
       )}
 
-      {/* Next button */}
       {showNavigation && (
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             onNext();
           }}
-          className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 hover:bg-white/20 transition-colors z-10"
+          className="absolute top-1/2 right-4 z-10 inline-flex min-h-[44px] min-w-[44px] -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-zinc-900/90 text-white transition-colors hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
           aria-label="Next image"
         >
-          <ChevronRight className="w-6 h-6 text-white" />
+          <ChevronRight className="h-5 w-5" aria-hidden="true" />
         </button>
       )}
 
-      {/* Image counter */}
-      {showNavigation && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-white/10 text-white text-sm z-10">
-          {currentIndex + 1} / {images.length}
-        </div>
-      )}
-
-      {/* Image */}
       <div
-        className="relative max-w-7xl max-h-[90vh] w-full h-full"
+        className="relative h-[82vh] w-full max-w-5xl"
         onClick={(e) => e.stopPropagation()}
       >
         <Image
@@ -102,8 +104,19 @@ export function ImageLightbox({ isOpen, images, currentIndex, onClose, onNext, o
           fill
           className="object-contain"
           quality={95}
-          sizes="100vw"
+          sizes="(max-width: 1024px) 95vw, 1024px"
         />
+      </div>
+
+      <div className="pointer-events-none absolute right-4 bottom-5 left-4 z-10 flex flex-col items-center gap-1.5 text-center">
+        <p className="max-w-xl rounded-full border border-white/10 bg-zinc-950/90 px-4 py-1.5 text-xs font-medium text-zinc-100 sm:text-sm">
+          {currentImage.alt}
+        </p>
+        {showNavigation && (
+          <span className="text-xs tabular-nums text-zinc-400">
+            {currentIndex + 1} / {images.length}
+          </span>
+        )}
       </div>
     </div>
   );

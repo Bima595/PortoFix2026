@@ -1,25 +1,39 @@
+import type { Metadata } from 'next';
 import { ServicesDock } from '@/app/services/components/ServicesDock';
 import PhotoBoothClient from '@/components/photobooth/PhotoBoothClient';
+import { getPhotoboothTemplates } from '@/lib/sanity/api';
+import type { PhotoboothTemplate } from '@/types/portfolio';
 
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic';
 
-export default function PhotoBoothPage() {
+export const metadata: Metadata = {
+  title: 'Photo Booth Studio Online',
+  description:
+    'Interactive online Photo Booth Studio by Satria Abimanyu (Satriabmnyu) with 18+ frames, filters, stickers, custom PNG auto-fit, and HD PNG export.',
+  alternates: {
+    canonical: '/photobooth',
+  },
+};
+
+export default async function PhotoBoothPage() {
+  let sanityTemplates: PhotoboothTemplate[] = [];
+  try {
+    const fetched = await getPhotoboothTemplates();
+    if (Array.isArray(fetched)) {
+      sanityTemplates = fetched;
+    }
+  } catch (err) {
+    console.error('Failed to load Sanity photobooth templates:', err);
+  }
+
   return (
-    <main className="relative min-h-screen w-full bg-black overflow-hidden font-sans">
-      {/* Background gradients */}
-      <div className="absolute inset-0 pointer-events-none z-0">
-        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-zinc-900/40 blur-[120px]" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-zinc-900/30 blur-[120px]" />
-      </div>
-
-      <div className="relative z-10 w-full min-h-screen flex flex-col justify-between">
-        {/* Main interactive area */}
-        <div className="grow flex items-center justify-center py-10 pb-28">
-          <PhotoBoothClient />
+    <main className="relative min-h-dvh w-full bg-[#09090B] text-[#FAFAFA] overflow-x-clip font-sans">
+      <div className="relative z-10 w-full min-h-dvh flex flex-col justify-between">
+        <div className="grow flex items-start justify-center py-8 sm:py-10 pb-8">
+          <PhotoBoothClient initialSanityTemplates={sanityTemplates} />
         </div>
 
-        {/* Bottom Dock Navigation */}
-        <ServicesDock />
+        <ServicesDock floating={false} />
       </div>
     </main>
   );

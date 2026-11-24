@@ -1,182 +1,389 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Camera, 
-  Download, 
-  RotateCcw, 
-  Sparkles, 
-  Image as ImageIcon, 
-  Video, 
-  AlertCircle, 
-  RefreshCw, 
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import {
+  AlertCircle,
   ArrowLeft,
+  Camera,
+  Check,
+  Copy,
+  Download,
+  FlipHorizontal2,
+  ImagePlus,
+  Layers,
   Loader2,
-  Check
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  SlidersHorizontal,
+  Smile,
+  SwitchCamera,
+  Trash2,
+  Type,
+  Upload,
+  Volume2,
+  VolumeX,
+  X,
 } from 'lucide-react';
 import { PhotoboothTemplate } from '@/types/portfolio';
 import { urlFor } from '@/sanity/lib/image';
-import { STICKER_ASSETS, drawSvgSticker, StickerAsset } from './StickerAssets';
-import { 
-  BoothState, 
-  PlacedSticker, 
-  PhotoFilter, 
-  PHOTO_FILTERS, 
+import { STICKER_ASSETS, StickerAsset } from './StickerAssets';
+import {
+  BoothState,
+  CountdownMode,
+  CustomFramePosition,
+  DEFAULT_PHOTO_TRANSFORM,
   LOCAL_TEMPLATES,
-  DEFAULT_CUSTOM_PADDINGS
+  PHOTO_FILTERS,
+  PhotoFilter,
+  PhotoTransform,
+  PlacedSticker,
+  SlotCoordinate,
 } from './PhotoBoothTypes';
-import { 
-  playSound, 
-  getLayoutDimensions, 
-  getTemplateSlots, 
-  drawCoverImage 
+import {
+  detectTransparentSlotsFromPng,
+  getFrameSpec,
+  playSound,
 } from './PhotoBoothHelpers';
+import { compilePhotoBoothCanvas } from './PhotoBoothCanvas';
 import PhotoBoothFrame from './PhotoBoothFrame';
+import FramePickerPanel from './FramePickerPanel';
 
-export default function PhotoBoothClient() {
+interface PhotoBoothClientProps {
+  initialSanityTemplates?: PhotoboothTemplate[];
+}
+
+type StudioTab = 'frames' | 'filters' | 'caption';
+type EditTab = 'stickers' | 'frames' | 'filters' | 'caption';
+
+const DEFAULT_CUSTOM_TEMPLATE: PhotoboothTemplate = {
+  _id: 'custom-user-frame',
+  name: 'Frame Custom PNG',
+  maxPhotos: 4,
+  layout: 'strip',
+  isActive: true,
+  topPadding: 3,
+  bottomPadding: 10,
+  sidePadding: 4,
+  rowSpacing: 2,
+  colSpacing: 3,
+};
+
+export default function PhotoBoothClient({
+  initialSanityTemplates = [],
+}: PhotoBoothClientProps) {
   const [customFrameImage, setCustomFrameImage] = useState<string | null>(null);
-  const [customFrameConfig, setCustomFrameConfig] = useState<PhotoboothTemplate>({
-    _id: 'custom-user-frame',
-    name: 'Frame Custom (Buat Sendiri)',
-    maxPhotos: 2,
-    layout: 'strip',
-    isActive: true,
-    topPadding: 3,
-    bottomPadding: 8,
-    sidePadding: 3,
-    rowSpacing: 3,
-    colSpacing: 3,
-  });
+  const [customFrameConfig, setCustomFrameConfig] = useState<PhotoboothTemplate>(
+    DEFAULT_CUSTOM_TEMPLATE
+  );
 
-  const templates = [...LOCAL_TEMPLATES, customFrameConfig];
+  const templates = useMemo(() => {
+    const activeSanity = initialSanityTemplates.filter((t) => t.isActive !== false);
+    return [...LOCAL_TEMPLATES, ...activeSanity, customFrameConfig];
+  }, [initialSanityTemplates, customFrameConfig]);
 
   const [state, setState] = useState<BoothState>('idle');
-  const [selectedTemplate, setSelectedTemplate] = useState<PhotoboothTemplate>(templates[0]);
-  const [templateAspectRatio, setTemplateAspectRatio] = useState<number | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(LOCAL_TEMPLATES[0]._id);
+  const [aspectRatioMap, setAspectRatioMap] = useState<Record<string, number>>({});
 
-  const retakeIndexRef = useRef<number | null>(null);
-  const capturedPhotosRef = useRef<string[]>([]);
+  const selectedTemplate = useMemo(() => {
+    return templates.find((t) => t._id === selectedTemplateId) ?? templates[0];
+  }, [templates, selectedTemplateId]);
+
+  const activeFrameUrl = useMemo(() => {
+    if (selectedTemplate._id === 'custom-user-frame') return customFrameImage;
+    if (!selectedTemplate._id.startsWith('local-') && selectedTemplate.frameImage) {
+      return urlFor(selectedTemplate.frameImage).url();
+    }
+    return null;
+  }, [selectedTemplate, customFrameImage]);
+
+  const templateAspectRatio = activeFrameUrl ? (aspectRatioMap[activeFrameUrl] ?? null) : null;
+
+  // Capture & camera state
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
+  const capturedPhotosRef = useRef<string[]>([]);
+  const retakeIndexRef = useRef<number | null>(null);
   const [currentCaptureIndex, setCurrentCaptureIndex] = useState(0);
-  const [countdown, setCountdown] = useState(3);
+  const [countdown, setCountdown] = useState<number>(3);
+  const [countdownMode, setCountdownMode] = useState<CountdownMode>(3);
   const [activeFilter, setActiveFilter] = useState<PhotoFilter>(PHOTO_FILTERS[0]);
   const [isMirrored, setIsMirrored] = useState(true);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const [isCompiling, setIsCompiling] = useState(false);
+  const [isStartingCamera, setIsStartingCamera] = useState(false);
 
-  // Stickers state
+  // Caption & export state
+  const [customCaption, setCustomCaption] = useState('');
+  const [showDate, setShowDate] = useState(true);
+  const [isCompiling, setIsCompiling] = useState(false);
+  const [downloadDone, setDownloadDone] = useState(false);
+  const [copyDone, setCopyDone] = useState(false);
+
+  // Feedback banner (replaces window.alert)
+  const [notice, setNotice] = useState<{ type: 'error' | 'info'; message: string } | null>(null);
+
+  // Tabs & stickers state
+  const [setupTab, setSetupTab] = useState<StudioTab>('frames');
+  const [editTab, setEditTab] = useState<EditTab>('stickers');
   const [placedStickers, setPlacedStickers] = useState<PlacedSticker[]>([]);
   const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'layout' | 'stickers'>('layout');
   const [uploadedStickers, setUploadedStickers] = useState<StickerAsset[]>([]);
   const [isAdjustingFrame, setIsAdjustingFrame] = useState(false);
-  const [customFramePosition, setCustomFramePosition] = useState({ x: 0, y: 0, w: 100, h: 100 });
+  const [customFramePosition, setCustomFramePosition] = useState<CustomFramePosition>({
+    x: 0,
+    y: 0,
+    w: 100,
+    h: 100,
+  });
+  const [customDetectedSlots, setCustomDetectedSlots] = useState<SlotCoordinate[] | null>(null);
+  const [cmsDetectedSlotsMap, setCmsDetectedSlotsMap] = useState<Record<string, SlotCoordinate[]>>({});
+  const [useAutoDetectedSlots, setUseAutoDetectedSlots] = useState(true);
+  const [photoTransforms, setPhotoTransforms] = useState<Record<number, PhotoTransform>>({});
+  const [selectedSlotIndex, setSelectedSlotIndex] = useState<number | null>(null);
+
+  const activeDetectedSlots = useMemo(() => {
+    if (selectedTemplate._id === 'custom-user-frame') {
+      return useAutoDetectedSlots ? customDetectedSlots : null;
+    }
+    if (!selectedTemplate._id.startsWith('local-') && activeFrameUrl) {
+      return cmsDetectedSlotsMap[activeFrameUrl] ?? null;
+    }
+    return null;
+  }, [selectedTemplate._id, useAutoDetectedSlots, customDetectedSlots, activeFrameUrl, cmsDetectedSlotsMap]);
+
+  // Refs for DOM elements & timer cleanup
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const bulkUploadInputRef = useRef<HTMLInputElement>(null);
+  const singleSlotInputRef = useRef<HTMLInputElement>(null);
+  const uploadTargetSlotRef = useRef<number>(0);
 
-  const allSelectableStickers = [...STICKER_ASSETS, ...uploadedStickers];
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutIdsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
-  // Load custom frame configuration from localStorage on mount
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const savedConfig = localStorage.getItem('pb-custom-frame-config');
-      if (savedConfig) {
-        const parsed = JSON.parse(savedConfig);
-        setCustomFrameConfig(parsed);
-        
-        const savedSelectedId = localStorage.getItem('pb-selected-template-id');
-        if (savedSelectedId === 'custom-user-frame') {
-          setSelectedTemplate(parsed);
-        } else if (savedSelectedId) {
-          const matched = LOCAL_TEMPLATES.find(t => t._id === savedSelectedId);
-          if (matched) setSelectedTemplate(matched);
-        }
-      }
-      const savedImage = localStorage.getItem('pb-custom-frame-image');
-      if (savedImage) {
-        setCustomFrameImage(savedImage);
-      }
-      const savedStickers = localStorage.getItem('pb-uploaded-stickers');
-      if (savedStickers) {
-        try {
-          setUploadedStickers(JSON.parse(savedStickers));
-        } catch (e) {
-          console.error('Failed to parse uploaded stickers', e);
-        }
-      }
-      const savedPosition = localStorage.getItem('pb-custom-frame-position');
-      if (savedPosition) {
-        try {
-          setCustomFramePosition(JSON.parse(savedPosition));
-        } catch (e) {
-          console.error('Failed to parse custom frame position', e);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to load custom frame from localStorage', e);
-    }
+  const allSelectableStickers = useMemo(
+    () => [...STICKER_ASSETS, ...uploadedStickers],
+    [uploadedStickers]
+  );
+
+  const selectedSticker = useMemo(
+    () => placedStickers.find((s) => s.id === selectedStickerId) ?? null,
+    [placedStickers, selectedStickerId]
+  );
+
+  const showNotice = useCallback((message: string, type: 'error' | 'info' = 'error') => {
+    setNotice({ type, message });
   }, []);
 
-  // Save custom frame position when it changes
+  const clearAllTimers = useCallback(() => {
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    timeoutIdsRef.current.forEach((id) => clearTimeout(id));
+    timeoutIdsRef.current.clear();
+  }, []);
+
+  const scheduleTimeout = useCallback((fn: () => void, ms: number) => {
+    const id = setTimeout(() => {
+      timeoutIdsRef.current.delete(id);
+      fn();
+    }, ms);
+    timeoutIdsRef.current.add(id);
+    return id;
+  }, []);
+
+  // Hydrate saved custom frame & stickers asynchronously after mount
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => {
+      if (!active || typeof window === 'undefined') return;
+      try {
+        const savedConfig = localStorage.getItem('pb-custom-frame-config');
+        if (savedConfig) {
+          setCustomFrameConfig(JSON.parse(savedConfig));
+        }
+        const savedSelectedId = localStorage.getItem('pb-selected-template-id');
+        if (savedSelectedId) {
+          setSelectedTemplateId(savedSelectedId);
+        }
+        const savedImage = localStorage.getItem('pb-custom-frame-image');
+        if (savedImage) {
+          setCustomFrameImage(savedImage);
+          detectTransparentSlotsFromPng(savedImage).then((detected) => {
+            if (!active) return;
+            if (detected.slots.length > 0) {
+              setCustomDetectedSlots(detected.slots);
+              setUseAutoDetectedSlots(true);
+            }
+          });
+        }
+        const savedStickers = localStorage.getItem('pb-uploaded-stickers');
+        if (savedStickers) {
+          setUploadedStickers(JSON.parse(savedStickers));
+        }
+        const savedPosition = localStorage.getItem('pb-custom-frame-position');
+        if (savedPosition) {
+          setCustomFramePosition(JSON.parse(savedPosition));
+        }
+      } catch (err) {
+        console.error('Failed to restore saved Photo Booth state', err);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Persist custom frame position
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
       localStorage.setItem('pb-custom-frame-position', JSON.stringify(customFramePosition));
-    } catch (e) {
-      console.error('Failed to save custom frame position to localStorage', e);
+    } catch {
+      // Ignore storage quota issues
     }
   }, [customFramePosition]);
 
-  // Save custom frame config
+  // Measure natural aspect ratio & auto-detect transparent slots for Sanity CMS / external PNG frames
+  useEffect(() => {
+    if (!activeFrameUrl) return;
+    const isCmsFrame =
+      !selectedTemplate._id.startsWith('local-') && selectedTemplate._id !== 'custom-user-frame';
+    const needsAspect = !aspectRatioMap[activeFrameUrl];
+    const needsCmsSlots = isCmsFrame && !(activeFrameUrl in cmsDetectedSlotsMap);
+    if (!needsAspect && !needsCmsSlots) return;
+
+    let cancelled = false;
+    detectTransparentSlotsFromPng(activeFrameUrl).then((detected) => {
+      if (cancelled) return;
+      if (needsAspect && detected.aspectRatio > 0) {
+        setAspectRatioMap((prev) => ({
+          ...prev,
+          [activeFrameUrl]: detected.aspectRatio,
+        }));
+      }
+      if (needsCmsSlots) {
+        setCmsDetectedSlotsMap((prev) => ({
+          ...prev,
+          [activeFrameUrl]: detected.slots,
+        }));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeFrameUrl, selectedTemplate._id, aspectRatioMap, cmsDetectedSlotsMap]);
+
+  // Bind webcam stream to primary video element without flickering on re-render
+  useEffect(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl) return;
+    if (videoEl.srcObject !== stream) {
+      videoEl.srcObject = stream;
+    }
+  }, [stream, state]);
+
+  // Cleanup camera stream and active timers on unmount
+  useEffect(() => {
+    return () => {
+      clearAllTimers();
+    };
+  }, [clearAllTimers]);
+
+  useEffect(() => {
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, [stream]);
+
+  // Persist custom template edits
   const saveCustomConfig = (newConfig: PhotoboothTemplate) => {
     setCustomFrameConfig(newConfig);
-    setSelectedTemplate(newConfig);
+    setSelectedTemplateId(newConfig._id);
     try {
       localStorage.setItem('pb-custom-frame-config', JSON.stringify(newConfig));
-    } catch (e) {
-      console.error('Failed to save custom frame config', e);
+      localStorage.setItem('pb-selected-template-id', newConfig._id);
+    } catch {
+      // Ignore quota
     }
   };
 
-  // Save custom frame base64 image
-  const saveCustomImage = (base64Image: string) => {
-    setCustomFrameImage(base64Image);
+  const handleSelectTemplate = (temp: PhotoboothTemplate) => {
+    setSelectedTemplateId(temp._id);
+    setNotice(null);
+    if (temp._id !== 'custom-user-frame') {
+      setIsAdjustingFrame(false);
+    }
     try {
-      localStorage.setItem('pb-custom-frame-image', base64Image);
-    } catch (e) {
-      console.warn('LocalStorage quota exceeded for custom frame image, keeping in memory only.', e);
-      localStorage.removeItem('pb-custom-frame-image');
+      localStorage.setItem('pb-selected-template-id', temp._id);
+    } catch {
+      // Ignore quota
     }
   };
 
   const handleCustomFrameUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     if (file.type !== 'image/png') {
-      alert('Format file harus berupa PNG transparan.');
+      showNotice('Format frame custom harus berupa file PNG transparan.');
+      e.target.value = '';
       return;
     }
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       const base64 = event.target?.result as string;
-      saveCustomImage(base64);
+      setCustomFrameImage(base64);
+      setCustomFramePosition({ x: 0, y: 0, w: 100, h: 100 });
+
+      const detected = await detectTransparentSlotsFromPng(base64);
+      setAspectRatioMap((prev) => ({ ...prev, [base64]: detected.aspectRatio }));
+
+      if (detected.slots.length > 0) {
+        setCustomDetectedSlots(detected.slots);
+        setUseAutoDetectedSlots(true);
+        const autoConfig: PhotoboothTemplate = {
+          ...customFrameConfig,
+          maxPhotos: detected.slots.length,
+          layout: detected.layout,
+        };
+        saveCustomConfig(autoConfig);
+        showNotice(
+          `Frame PNG otomatis disesuaikan: terdeteksi ${detected.slots.length} kotak foto transparan.`,
+          'info'
+        );
+      } else {
+        setCustomDetectedSlots(null);
+        setUseAutoDetectedSlots(false);
+        showNotice(
+          'Tidak ditemukan area transparan di dalam PNG. Pastikan kotak foto sudah transparan atau atur margin secara manual.',
+          'info'
+        );
+      }
+
+      try {
+        localStorage.setItem('pb-custom-frame-image', base64);
+      } catch {
+        localStorage.removeItem('pb-custom-frame-image');
+      }
     };
     reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const handleStickerUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach(file => {
+    Array.from(files).forEach((file) => {
       if (!file.type.startsWith('image/')) {
-        alert('Format file harus berupa gambar.');
+        showNotice('File stiker harus berupa gambar (PNG, WebP, JPG, atau SVG).');
         return;
       }
 
@@ -184,20 +391,22 @@ export default function PhotoBoothClient() {
       reader.onload = (event) => {
         const base64 = event.target?.result as string;
         const newSticker: StickerAsset = {
-          id: `custom-sticker-${Date.now()}-${Math.random()}`,
-          name: file.name.split('.')[0] || 'Custom Sticker',
+          id: `custom-sticker-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          name: file.name.replace(/\.[^.]+$/, '') || 'Stiker Custom',
           svg: '',
           isCustom: true,
-          src: base64
+          src: base64,
         };
 
-        setUploadedStickers(prev => {
+        setUploadedStickers((prev) => {
           const updated = [...prev, newSticker];
           try {
             localStorage.setItem('pb-uploaded-stickers', JSON.stringify(updated));
-          } catch (err) {
-            console.warn('LocalStorage quota exceeded for uploaded stickers.', err);
-            alert('Penyimpanan lokal penuh, beberapa stiker tidak dapat disimpan secara permanen.');
+          } catch {
+            showNotice(
+              'Penyimpanan lokal browser penuh. Stiker tetap bisa dipakai untuk sesi ini.',
+              'info'
+            );
           }
           return updated;
         });
@@ -207,1516 +416,1548 @@ export default function PhotoBoothClient() {
     e.target.value = '';
   };
 
-  const handleDeleteUploadedSticker = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setUploadedStickers(prev => {
-      const updated = prev.filter(s => s.id !== id);
+  const handleDeleteUploadedSticker = (id: string) => {
+    setUploadedStickers((prev) => {
+      const updated = prev.filter((s) => s.id !== id);
       try {
         localStorage.setItem('pb-uploaded-stickers', JSON.stringify(updated));
-      } catch (err) {
-        console.error(err);
+      } catch {
+        // Ignore
       }
       return updated;
     });
-    setPlacedStickers(prev => prev.filter(s => s.stickerId !== id));
+    setPlacedStickers((prev) => prev.filter((s) => s.stickerId !== id));
   };
 
-  const handleSelectTemplate = (temp: PhotoboothTemplate) => {
-    setSelectedTemplate(temp);
-    try {
-      localStorage.setItem('pb-selected-template-id', temp._id);
-    } catch (e) {
-      console.error(e);
-    }
-  };
+  // --- CAMERA CONTROLS ---
+  const stopCamera = useCallback(() => {
+    clearAllTimers();
+    setStream((prev) => {
+      if (prev) prev.getTracks().forEach((track) => track.stop());
+      return null;
+    });
+  }, [clearAllTimers]);
 
-  // Stop camera stream when component unmounts or state changes
-  useEffect(() => {
-    return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+  const startCamera = useCallback(
+    async (requestedFacing: 'user' | 'environment' = facingMode) => {
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+        showNotice(
+          'Browser ini tidak mendukung akses kamera langsung. Gunakan fitur Upload Foto dari Perangkat.'
+        );
+        return;
       }
-    };
-  }, [stream]);
 
-  // Load natural aspect ratio of frames
-  useEffect(() => {
-    setTemplateAspectRatio(null);
-    const isLocal = selectedTemplate._id.startsWith('local-');
-    if (selectedTemplate._id === 'custom-user-frame') {
-      if (customFrameImage) {
-        const img = new Image();
-        img.src = customFrameImage;
-        img.onload = () => {
-          setTemplateAspectRatio(img.naturalWidth / img.naturalHeight);
-        };
+      clearAllTimers();
+      setNotice(null);
+      setIsStartingCamera(true);
+      setState('ready');
+
+      try {
+        setStream((prev) => {
+          if (prev) prev.getTracks().forEach((t) => t.stop());
+          return null;
+        });
+
+        const mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 960 },
+            facingMode: requestedFacing,
+          },
+          audio: false,
+        });
+
+        setStream(mediaStream);
+        setFacingMode(requestedFacing);
+        if (requestedFacing === 'environment') {
+          setIsMirrored(false);
+        }
+      } catch (err) {
+        const error = err as { name?: string };
+        const msg =
+          error.name === 'NotAllowedError'
+            ? 'Akses kamera ditolak browser. Izinkan kamera atau gunakan Upload Foto dari Perangkat.'
+            : 'Kamera tidak terdeteksi. Pastikan perangkat kamera aktif atau upload foto langsung.';
+        showNotice(msg);
+        setState('idle');
+      } finally {
+        setIsStartingCamera(false);
       }
-    } else if (!isLocal && selectedTemplate.frameImage) {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.src = urlFor(selectedTemplate.frameImage).url();
-      img.onload = () => {
-        setTemplateAspectRatio(img.naturalWidth / img.naturalHeight);
-      };
-    }
-  }, [selectedTemplate, customFrameImage]);
+    },
+    [clearAllTimers, facingMode, showNotice]
+  );
 
-  // Camera helpers
-  const startCamera = async () => {
-    setCameraError(null);
-    setState('ready');
-    try {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+  const handleToggleFacingCamera = () => {
+    const nextFacing = facingMode === 'user' ? 'environment' : 'user';
+    startCamera(nextFacing);
+  };
+
+  // --- CAPTURE ENGINE ---
+  const captureSnapshot = useCallback(
+    (slotIndex: number, autoContinue: boolean) => {
+      const video = videoRef.current;
+      if (!video || video.readyState < 2) {
+        showNotice('Kamera belum siap mengambil gambar. Coba sesaat lagi.');
+        setState('ready');
+        return;
       }
-      
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: 'user'
-        },
-        audio: false
-      });
-      
-      setStream(mediaStream);
-    } catch (err) {
-      const error = err as { name?: string };
-      console.error('Error accessing camera:', err);
-      setCameraError(
-        error.name === 'NotAllowedError' 
-          ? 'Kamera tidak diizinkan. Harap izinkan akses kamera di browser Anda.' 
-          : 'Gagal mendeteksi kamera. Pastikan kamera terhubung.'
-      );
-      setState('idle');
-    }
-  };
 
-  const stopCamera = () => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
-    }
-  };
+      playSound('shutter', soundEnabled);
+      setState('flash');
 
-  // Start automated capture session
-  const startCaptureSession = () => {
-    if (!stream) return;
-    setCapturedPhotos([]);
-    capturedPhotosRef.current = [];
-    retakeIndexRef.current = null;
-    setCurrentCaptureIndex(0);
-    startCountdown(0);
-  };
+      scheduleTimeout(() => {
+        const snapCanvas = document.createElement('canvas');
+        snapCanvas.width = video.videoWidth || 1280;
+        snapCanvas.height = video.videoHeight || 720;
+        const ctx = snapCanvas.getContext('2d');
 
-  // Countdown timer cycle
-  const startCountdown = (index: number) => {
-    setCurrentCaptureIndex(index);
-    setCountdown(3);
-    setState('countdown');
-    
-    let currentCount = 3;
-    playSound('beep');
-    
-    const interval = setInterval(() => {
-      currentCount--;
-      if (currentCount > 0) {
-        setCountdown(currentCount);
-        playSound('beep');
-      } else {
-        clearInterval(interval);
-        capturePhoto(index);
-      }
-    }, 1000);
-  };
+        if (!ctx) {
+          setState('ready');
+          return;
+        }
 
-  const handleRetakeSingleSlot = (idx: number) => {
-    retakeIndexRef.current = idx;
-    startCountdown(idx);
-  };
-
-  const capturePhoto = (index: number) => {
-    const video = videoRef.current || document.querySelector('video');
-    if (!video) return;
-
-    playSound('shutter');
-    setState('flash');
-
-    setTimeout(() => {
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth || 1280;
-      canvas.height = video.videoHeight || 720;
-      const ctx = canvas.getContext('2d');
-      
-      if (ctx) {
         if (isMirrored) {
-          ctx.translate(canvas.width, 0);
+          ctx.translate(snapCanvas.width, 0);
           ctx.scale(-1, 1);
         }
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
-        
+        ctx.drawImage(video, 0, 0, snapCanvas.width, snapCanvas.height);
+        const dataUrl = snapCanvas.toDataURL('image/jpeg', 0.95);
+
+        const updated = [...capturedPhotosRef.current];
+        updated[slotIndex] = dataUrl;
+        capturedPhotosRef.current = updated;
+        setCapturedPhotos(updated);
+
+        // Single slot retake finished -> return to review
         if (retakeIndexRef.current !== null) {
-          const updatedPhotos = [...capturedPhotosRef.current];
-          updatedPhotos[retakeIndexRef.current] = dataUrl;
-          capturedPhotosRef.current = updatedPhotos;
-          setCapturedPhotos(updatedPhotos);
-          
           retakeIndexRef.current = null;
-          setTimeout(() => {
+          scheduleTimeout(() => {
             setState('review');
-          }, 1000);
-        } else {
-          const updatedPhotos = [...capturedPhotosRef.current, dataUrl];
-          capturedPhotosRef.current = updatedPhotos;
-          setCapturedPhotos(updatedPhotos);
-          
-          const nextIndex = index + 1;
-          if (nextIndex < selectedTemplate.maxPhotos) {
-            setTimeout(() => {
-              startCountdown(nextIndex);
-            }, 1000);
-          } else {
-            setTimeout(() => {
-              setState('review');
-            }, 1000);
-          }
+          }, 450);
+          return;
         }
+
+        const nextIndex = slotIndex + 1;
+        if (nextIndex < selectedTemplate.maxPhotos) {
+          setCurrentCaptureIndex(nextIndex);
+          if (autoContinue && countdownMode > 0) {
+            scheduleTimeout(() => {
+              // Start next automatic countdown
+              setCountdown(countdownMode);
+              setState('countdown');
+              let remaining: number = countdownMode;
+              playSound('beep', soundEnabled);
+
+              countdownIntervalRef.current = setInterval(() => {
+                remaining -= 1;
+                if (remaining > 0) {
+                  setCountdown(remaining);
+                  playSound('beep', soundEnabled);
+                } else {
+                  if (countdownIntervalRef.current) {
+                    clearInterval(countdownIntervalRef.current);
+                    countdownIntervalRef.current = null;
+                  }
+                  captureSnapshot(nextIndex, true);
+                }
+              }, 1000);
+            }, 650);
+          } else {
+            // Manual mode: pause and let user press shutter when ready for next pose
+            scheduleTimeout(() => {
+              setState('ready');
+            }, 350);
+          }
+        } else {
+          scheduleTimeout(() => {
+            setState('review');
+          }, 550);
+        }
+      }, 140);
+    },
+    [countdownMode, isMirrored, scheduleTimeout, selectedTemplate.maxPhotos, showNotice, soundEnabled]
+  );
+
+  const runCountdownForSlot = useCallback(
+    (slotIndex: number, autoContinue: boolean) => {
+      clearAllTimers();
+      setCurrentCaptureIndex(slotIndex);
+
+      if (countdownMode === 0) {
+        captureSnapshot(slotIndex, false);
+        return;
       }
-    }, 150);
+
+      setCountdown(countdownMode);
+      setState('countdown');
+      let remaining: number = countdownMode;
+      playSound('beep', soundEnabled);
+
+      countdownIntervalRef.current = setInterval(() => {
+        remaining -= 1;
+        if (remaining > 0) {
+          setCountdown(remaining);
+          playSound('beep', soundEnabled);
+        } else {
+          if (countdownIntervalRef.current) {
+            clearInterval(countdownIntervalRef.current);
+            countdownIntervalRef.current = null;
+          }
+          captureSnapshot(slotIndex, autoContinue);
+        }
+      }, 1000);
+    },
+    [captureSnapshot, clearAllTimers, countdownMode, soundEnabled]
+  );
+
+  const handleStartOrSnapShutter = () => {
+    if (!stream) return;
+    setNotice(null);
+
+    if (countdownMode === 0) {
+      // Manual shot-by-shot mode
+      const nextEmpty = capturedPhotosRef.current.length;
+      const targetIdx =
+        nextEmpty < selectedTemplate.maxPhotos ? nextEmpty : currentCaptureIndex;
+      retakeIndexRef.current = null;
+      runCountdownForSlot(targetIdx, false);
+      return;
+    }
+
+    // Automatic session mode
+    capturedPhotosRef.current = [];
+    setCapturedPhotos([]);
+    retakeIndexRef.current = null;
+    runCountdownForSlot(0, true);
   };
 
-  // Compile photos onto canvas when downloading
-  const compilePhotos = async (photos: string[], currentStickers = placedStickers, showSpinner = true): Promise<string | null> => {
-    if (showSpinner) setIsCompiling(true);
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-
-    const layout = selectedTemplate.layout;
-    const isLocal = selectedTemplate._id.startsWith('local-');
-
-    // Load captured photos
-    const photoImages = await Promise.all(
-      photos.map(src => {
-        return new Promise<HTMLImageElement>((resolve) => {
-          const img = new Image();
-          img.src = src;
-          img.onload = () => resolve(img);
-        });
-      })
-    );
-
-    // Load frame overlay
-    let frameImg: HTMLImageElement | null = null;
-    let computedAspectRatio = templateAspectRatio;
-    if (selectedTemplate._id === 'custom-user-frame' && customFrameImage) {
-      frameImg = await new Promise<HTMLImageElement | null>((resolve) => {
-        const img = new Image();
-        img.src = customFrameImage;
-        img.onload = () => {
-          computedAspectRatio = img.naturalWidth / img.naturalHeight;
-          resolve(img);
-        };
-        img.onerror = () => resolve(null);
-      });
-    } else if (!isLocal && selectedTemplate.frameImage) {
-      frameImg = await new Promise<HTMLImageElement | null>((resolve) => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.src = urlFor(selectedTemplate.frameImage!).url();
-        img.onload = () => {
-          computedAspectRatio = img.naturalWidth / img.naturalHeight;
-          resolve(img);
-        };
-        img.onerror = () => resolve(null);
-      });
-    }
-
-    let width = 0;
-    let height = 0;
-
-    if (frameImg) {
-      width = frameImg.naturalWidth;
-      height = frameImg.naturalHeight;
-    } else {
-      const dims = getLayoutDimensions(selectedTemplate, computedAspectRatio);
-      width = dims.totalWidth;
-      height = dims.totalHeight;
-    }
-
-    canvas.width = width;
-    canvas.height = height;
-
-    // 1. Background
-    if (selectedTemplate._id === 'local-black-strip') {
-      ctx.fillStyle = '#121212';
-    } else if (selectedTemplate._id === 'local-film-strip') {
-      ctx.fillStyle = '#09090b';
-    } else if (layout === 'single') {
-      ctx.fillStyle = '#fcf8f2';
-    } else {
-      ctx.fillStyle = '#ffffff';
-    }
-    ctx.fillRect(0, 0, width, height);
-
-    // 2. Film Strip Sprockets
-    if (!frameImg && selectedTemplate._id === 'local-film-strip') {
-      ctx.fillStyle = '#18181b';
-      const holeW = 6;
-      const holeH = 10;
-      const holeGap = 16;
-      for (let y = 10; y < height - 10; y += holeGap) {
-        ctx.fillRect(4, y, holeW, holeH);
-        ctx.fillRect(width - 4 - holeW, y, holeW, holeH);
-      }
-    }
-
-    // 3. Draw Photos
-    const slots = getTemplateSlots(selectedTemplate, computedAspectRatio);
-    slots.forEach((slot) => {
-      const img = photoImages[slot.photoIdx];
-      if (!img) return;
-
-      const x = (slot.leftPercent / 100) * width;
-      const y = (slot.topPercent / 100) * height;
-      const w = (slot.widthPercent / 100) * width;
-      const h = (slot.heightPercent / 100) * height;
-
-      ctx.save();
-      if (activeFilter.canvasFilter !== 'none') {
-        ctx.filter = activeFilter.canvasFilter;
-      }
-      drawCoverImage(ctx, img, x, y, w, h);
-      ctx.restore();
-
-      if (!frameImg && selectedTemplate._id === 'local-film-strip') {
-        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, w, h);
-      }
-      
-      if (!frameImg && layout === 'single') {
-        ctx.strokeStyle = 'rgba(0,0,0,0.06)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, w, h);
-      }
-    });
-
-    // 4. Frame Overlay Image / Footer Text
-    if (frameImg) {
-      if (selectedTemplate._id === 'custom-user-frame') {
-        const fx = (customFramePosition.x / 100) * width;
-        const fy = (customFramePosition.y / 100) * height;
-        const fw = (customFramePosition.w / 100) * width;
-        const fh = (customFramePosition.h / 100) * height;
-        ctx.drawImage(frameImg, fx, fy, fw, fh);
-      } else {
-        ctx.drawImage(frameImg, 0, 0, width, height);
-      }
-    } else {
-      ctx.fillStyle = selectedTemplate._id === 'local-black-strip' ? '#71717a' : '#18181b';
-      ctx.textAlign = 'center';
-
-      if (layout === 'strip') {
-        ctx.font = 'bold 12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI"';
-        ctx.fillText('Satriabanyu Photo Booth Online', width / 2, height - 32);
-        ctx.font = 'italic 9px serif';
-        ctx.fillStyle = selectedTemplate._id === 'local-black-strip' ? '#52525b' : '#71717a';
-        ctx.fillText(
-          new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'short', day: 'numeric' }),
-          width / 2,
-          height - 16
-        );
-      } else if (layout === 'grid') {
-        ctx.font = 'bold 13px system-ui';
-        ctx.fillText('Satriabanyu Photo Booth Online', width / 2, height - 28);
-        ctx.font = '9px system-ui';
-        ctx.fillStyle = '#71717a';
-        ctx.fillText('• Captured with Satriabanyu Photo Booth •', width / 2, height - 12);
-      } else {
-        ctx.fillStyle = '#27272a';
-        ctx.font = 'italic 14px Georgia, serif';
-        ctx.fillText('Satriabanyu Photo Booth Online', width / 2, height - 36);
-        ctx.font = '9px monospace';
-        ctx.fillStyle = '#a1a1aa';
-        ctx.fillText(
-          new Date().toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }),
-          width / 2,
-          height - 18
-        );
-      }
-    }
-
-    // 5. Draw Stickers
-    for (const st of currentStickers) {
-      const asset = allSelectableStickers.find(a => a.id === st.stickerId);
-      if (!asset) continue;
-
-      ctx.save();
-      const absX = (st.x / 100) * width;
-      const absY = (st.y / 100) * height;
-      const absW = (st.size / 100) * width;
-      const absH = absW;
-      
-      ctx.translate(absX, absY);
-      ctx.rotate((st.rotation * Math.PI) / 180);
-      
-      if (asset.isCustom && asset.src) {
-        await new Promise<void>((resolve) => {
-          const img = new Image();
-          img.src = asset.src!;
-          img.onload = () => {
-            ctx.drawImage(img, -absW / 2, -absH / 2, absW, absH);
-            resolve();
-          };
-          img.onerror = () => resolve();
-        });
-      } else {
-        await drawSvgSticker(ctx, asset.svg, -absW / 2, -absH / 2, absW, absH);
-      }
-      ctx.restore();
-    }
-
-    const compiledUrl = canvas.toDataURL('image/png');
-    if (showSpinner) setIsCompiling(false);
-    return compiledUrl;
-  };
-
-  const handleFilterChange = (filter: PhotoFilter) => {
-    setActiveFilter(filter);
-  };
-
-  const handleConfirmReview = () => {
-    stopCamera();
-    setPlacedStickers([]);
-    setSelectedStickerId(null);
-    setState('preview');
+  const handleRetakeSingleSlot = (slotIdx: number) => {
+    if (!stream) return;
+    retakeIndexRef.current = slotIdx;
+    runCountdownForSlot(slotIdx, false);
   };
 
   const handleRetakeAll = () => {
-    setCapturedPhotos([]);
+    clearAllTimers();
     capturedPhotosRef.current = [];
+    setCapturedPhotos([]);
+    setPhotoTransforms({});
+    setSelectedSlotIndex(null);
     retakeIndexRef.current = null;
     setCurrentCaptureIndex(0);
     setPlacedStickers([]);
     setSelectedStickerId(null);
-    startCamera();
+    setNotice(null);
+    if (stream) {
+      setState('ready');
+    } else {
+      startCamera(facingMode);
+    }
   };
 
-  const handleRetake = () => {
-    setCapturedPhotos([]);
-    capturedPhotosRef.current = [];
-    retakeIndexRef.current = null;
-    setPlacedStickers([]);
-    setSelectedStickerId(null);
-    startCamera();
+  const handleGoToEditStudio = () => {
+    stopCamera();
+    setNotice(null);
+    setState('preview');
   };
 
   const handleBackToIdle = () => {
     stopCamera();
-    setCapturedPhotos([]);
     capturedPhotosRef.current = [];
-    retakeIndexRef.current = null;
+    setCapturedPhotos([]);
+    setPhotoTransforms({});
+    setSelectedSlotIndex(null);
+    setCurrentCaptureIndex(0);
     setPlacedStickers([]);
     setSelectedStickerId(null);
+    setNotice(null);
     setState('idle');
   };
 
-  const handleDownload = async () => {
+  // --- LOCAL PHOTO UPLOAD (NO CAMERA REQUIRED!) ---
+  const readImageFileAsDataUrl = (file: File): Promise<string | null> => {
+    return new Promise((resolve) => {
+      if (!file.type.startsWith('image/')) {
+        resolve(null);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (ev) => resolve((ev.target?.result as string) || null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleBulkPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const validFiles = Array.from(files).slice(0, Math.max(selectedTemplate.maxPhotos, 6));
+    const results = await Promise.all(validFiles.map(readImageFileAsDataUrl));
+    const dataUrls = results.filter((u): u is string => Boolean(u));
+    e.target.value = '';
+
+    if (dataUrls.length === 0) {
+      showNotice('File yang dipilih bukan gambar valid (JPG, PNG, atau WebP).');
+      return;
+    }
+
+    stopCamera();
+    capturedPhotosRef.current = dataUrls;
+    setCapturedPhotos(dataUrls);
+    setPhotoTransforms({});
+    setSelectedSlotIndex(0);
+    setNotice(null);
+    setState('preview');
+  };
+
+  const triggerSingleSlotUpload = (slotIdx: number) => {
+    uploadTargetSlotRef.current = slotIdx;
+    singleSlotInputRef.current?.click();
+  };
+
+  const applySingleSlotFile = async (slotIdx: number, file: File) => {
+    const dataUrl = await readImageFileAsDataUrl(file);
+    if (!dataUrl) {
+      showNotice('Format file harus berupa gambar valid (JPG, PNG, atau WebP).');
+      return;
+    }
+
+    const updated = [...capturedPhotosRef.current];
+    updated[slotIdx] = dataUrl;
+    capturedPhotosRef.current = updated;
+    setCapturedPhotos(updated);
+    setPhotoTransforms((prev) => ({
+      ...prev,
+      [slotIdx]: { ...DEFAULT_PHOTO_TRANSFORM },
+    }));
+    setSelectedSlotIndex(slotIdx);
+    setNotice(null);
+    if (state === 'idle') {
+      setState('preview');
+    }
+  };
+
+  const handleSingleSlotUploadChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    await applySingleSlotFile(uploadTargetSlotRef.current, file);
+  };
+
+  const handleDropFileOnSlot = (slotIdx: number, file: File) => {
+    void applySingleSlotFile(slotIdx, file);
+  };
+
+  // --- STICKER ACTIONS ---
+  const addStickerToCanvas = (stickerId: string) => {
+    const jitterX = 42 + Math.round(Math.random() * 16);
+    const jitterY = 38 + Math.round(Math.random() * 24);
+    const newSticker: PlacedSticker = {
+      id: `sticker-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      stickerId,
+      x: jitterX,
+      y: jitterY,
+      size: 20,
+      rotation: 0,
+    };
+    setPlacedStickers((prev) => [...prev, newSticker]);
+    setSelectedStickerId(newSticker.id);
+  };
+
+  const updateSelectedSticker = (patch: Partial<PlacedSticker>) => {
+    if (!selectedStickerId) return;
+    setPlacedStickers((prev) =>
+      prev.map((st) => (st.id === selectedStickerId ? { ...st, ...patch } : st))
+    );
+  };
+
+  const duplicateSelectedSticker = () => {
+    if (!selectedSticker) return;
+    const copy: PlacedSticker = {
+      ...selectedSticker,
+      id: `sticker-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      x: Math.min(92, selectedSticker.x + 6),
+      y: Math.min(92, selectedSticker.y + 6),
+    };
+    setPlacedStickers((prev) => [...prev, copy]);
+    setSelectedStickerId(copy.id);
+  };
+
+  // --- HD EXPORT (DOWNLOAD & COPY) ---
+  const renderExportDataUrl = async (): Promise<string | null> => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+
     setIsCompiling(true);
+    setNotice(null);
     try {
-      const url = await compilePhotos(capturedPhotos, placedStickers, false);
-      if (!url) return;
-      const link = document.createElement('a');
-      link.download = `photobooth-${selectedTemplate.name.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}.png`;
-      link.href = url;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      return await compilePhotoBoothCanvas({
+        canvas,
+        selectedTemplate,
+        templateAspectRatio,
+        customFrameImage,
+        customFramePosition,
+        customDetectedSlots: activeDetectedSlots,
+        photos: capturedPhotos,
+        photoTransforms,
+        activeFilter,
+        placedStickers,
+        allStickers: allSelectableStickers,
+        customCaption,
+        showDate,
+      });
     } catch (err) {
-      console.error('Failed to compile and download image:', err);
+      console.error('Canvas compile failed', err);
+      showNotice('Gagal menyusun gambar HD. Silakan coba lagi.');
+      return null;
     } finally {
       setIsCompiling(false);
     }
   };
 
-  const handleAddSticker = (stickerId: string) => {
-    const newSticker: PlacedSticker = {
-      id: `sticker-${Date.now()}-${Math.random()}`,
-      stickerId,
-      x: 50,
-      y: 50,
-      size: 15,
-      rotation: 0,
-    };
-    setPlacedStickers(prev => [...prev, newSticker]);
-    setSelectedStickerId(newSticker.id);
+  const handleDownloadPNG = async () => {
+    const dataUrl = await renderExportDataUrl();
+    if (!dataUrl) return;
+
+    const safeName = selectedTemplate.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const link = document.createElement('a');
+    link.download = `photobooth-${safeName}-${Date.now()}.png`;
+    link.href = dataUrl;
+    link.click();
+
+    setDownloadDone(true);
+    scheduleTimeout(() => setDownloadDone(false), 2200);
   };
 
-  const handleDeleteSticker = (id: string) => {
-    setPlacedStickers(prev => prev.filter(s => s.id !== id));
-    setSelectedStickerId(null);
+  const handleCopyPNG = async () => {
+    const dataUrl = await renderExportDataUrl();
+    if (!dataUrl) return;
+
+    if (typeof navigator === 'undefined' || !navigator.clipboard || typeof ClipboardItem === 'undefined') {
+      showNotice('Browser ini tidak mendukung salin gambar langsung. Gunakan tombol Unduh HD PNG.', 'info');
+      return;
+    }
+
+    try {
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      setCopyDone(true);
+      scheduleTimeout(() => setCopyDone(false), 2200);
+    } catch {
+      showNotice('Clipboard dibatasi oleh browser. Gunakan tombol Unduh HD PNG.', 'info');
+    }
   };
+
+  const currentStep = state === 'idle' ? 1 : state === 'preview' ? 3 : 2;
+  const filledCount = capturedPhotos.slice(0, selectedTemplate.maxPhotos).filter(Boolean).length;
+  const activeSpec = getFrameSpec(selectedTemplate._id);
+  const isCaptureRunning = state === 'countdown' || state === 'flash';
 
   return (
-    <div className="w-full max-w-4xl mx-auto px-4 py-8 md:py-16 text-zinc-100 min-h-[80vh] flex flex-col items-center justify-center">
-      {/* Hidden Canvas used for photo compiling */}
-      <canvas ref={canvasRef} className="hidden" />
+    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 text-[#FAFAFA]">
+      {/* Hidden offscreen HD canvas + file inputs */}
+      <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
+      <input
+        ref={bulkUploadInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        onChange={handleBulkPhotoUpload}
+        className="sr-only"
+        aria-label="Upload foto dari perangkat"
+      />
+      <input
+        ref={singleSlotInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleSingleSlotUploadChange}
+        className="sr-only"
+        aria-label="Upload foto untuk slot tertentu"
+      />
 
-      {/* FLASH SCREEN EFFECT */}
-      <AnimatePresence>
-        {state === 'flash' && (
-          <motion.div 
-            initial={{ opacity: 1 }}
-            animate={{ opacity: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="fixed inset-0 bg-white z-50 pointer-events-none"
-          />
-        )}
-      </AnimatePresence>
-
-      <div className="w-full max-w-3xl flex flex-col items-center">
-        {/* HEADER */}
-        <div className="text-center mb-8">
-          <motion.div 
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-xs font-semibold text-zinc-400 mb-3"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-zinc-300" />
-            <span>Interactive Portfolio Add-on</span>
-          </motion.div>
-          <motion.h1 
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="text-4xl md:text-5xl font-medium tracking-tight bg-linear-to-br from-white to-zinc-500 bg-clip-text text-transparent"
-          >
-            Photo <span className="font-serif italic text-zinc-400">Booth</span>
-          </motion.h1>
-          <motion.p 
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="text-zinc-400 text-sm md:text-base mt-2 max-w-md mx-auto"
-          >
-            Ambil foto instan menggunakan webcam Anda dengan template dan filter estetika ala cetakan film fisik.
-          </motion.p>
+      {/* Top Studio Header & Step Indicator */}
+      <header className="mb-6 sm:mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-zinc-800/80 pb-5">
+        <div>
+          <p className="text-[11px] font-mono uppercase tracking-[0.2em] text-[#94949E]">
+            STUDIO / PHOTO BOOTH ONLINE
+          </p>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white mt-1">
+            Photo Booth Studio
+          </h1>
+          <p className="text-sm text-[#A1A1AA] mt-1">
+            {templates.length} pilihan frame, {PHOTO_FILTERS.length} filter warna,{' '}
+            {STICKER_ASSETS.length} stiker vektor, dan ekspor PNG HD.
+          </p>
         </div>
 
-        {/* STATE: IDLE */}
-        {state === 'idle' && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="w-full bg-zinc-900/50 backdrop-blur-xl border border-zinc-800 rounded-3xl p-6 md:p-10 flex flex-col items-center gap-8 shadow-2xl shadow-black/50"
+        {/* Clean 3-step studio breadcrumb */}
+        <ol className="flex items-center gap-2 text-xs font-mono shrink-0" aria-label="Tahapan sesi">
+          {[
+            { num: 1, label: 'Frame' },
+            { num: 2, label: 'Ambil Foto' },
+            { num: 3, label: 'Edit & Simpan' },
+          ].map((step) => {
+            const isCurrent = currentStep === step.num;
+            const isDone = currentStep > step.num;
+            return (
+              <li
+                key={step.num}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border ${
+                  isCurrent
+                    ? 'bg-white text-[#09090B] border-white font-semibold'
+                    : isDone
+                      ? 'bg-[#18181B] text-[#FAFAFA] border-zinc-700'
+                      : 'bg-[#111113] text-[#94949E] border-zinc-800'
+                }`}
+              >
+                <span>0{step.num}</span>
+                <span>{step.label}</span>
+              </li>
+            );
+          })}
+        </ol>
+      </header>
+
+      {/* Accessible Inline Notice / Error Banner */}
+      {notice && (
+        <div
+          role="alert"
+          className={`mb-5 px-4 py-3 rounded-xl border flex items-start justify-between gap-3 text-sm ${
+            notice.type === 'error'
+              ? 'bg-[#2A1215] border-[#B91C1C] text-[#FECACA]'
+              : 'bg-[#18181B] border-zinc-600 text-[#E4E4E7]'
+          }`}
+        >
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+            <span>{notice.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            aria-label="Tutup pemberitahuan"
+            className="p-1 rounded-md hover:bg-white/10 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
           >
-            <div className="w-full max-w-md aspect-4/3 bg-zinc-950 rounded-2xl flex flex-col items-center justify-center border border-zinc-800 text-center p-6 relative group overflow-hidden">
-              <div className="absolute inset-0 bg-radial from-zinc-900 to-zinc-950 opacity-50" />
-              <Video className="w-16 h-16 text-zinc-650 mb-4 relative z-10 group-hover:scale-110 transition-transform duration-300" />
-              <p className="text-zinc-400 font-medium text-sm relative z-10">Webcam tidak aktif</p>
-              <p className="text-zinc-500 text-xs mt-1 relative z-10">Izinkan akses kamera untuk mengambil gambar.</p>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* ==================== STAGE 1: IDLE / FRAME SETUP ==================== */}
+      {state === 'idle' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Left Preview Stage */}
+          <section
+            aria-label="Pratinjau frame terpilih"
+            className="lg:col-span-5 bg-[#111113] border border-zinc-800 rounded-2xl p-5 sm:p-6 flex flex-col items-center"
+          >
+            <div className="w-full flex items-center justify-between mb-4">
+              <div>
+                <span className="text-[11px] font-mono uppercase tracking-wider text-[#94949E]">
+                  Pratinjau Langsung
+                </span>
+                <h2 className="text-base font-semibold text-white">{selectedTemplate.name}</h2>
+              </div>
+              <span className="px-2.5 py-1 rounded-md bg-[#18181B] border border-zinc-700 text-xs font-mono text-[#E4E4E7]">
+                {selectedTemplate.maxPhotos} Foto
+              </span>
             </div>
 
-            {cameraError && (
-              <div className="flex items-center gap-3 bg-red-950/30 border border-red-900/50 text-red-400 p-4 rounded-xl max-w-md">
-                <AlertCircle className="w-5 h-5 shrink-0" />
-                <span className="text-xs font-medium">{cameraError}</span>
+            <div className="w-full py-4 px-2 rounded-xl bg-[#09090B] border border-zinc-800/80 flex items-center justify-center min-h-[340px]">
+              <PhotoBoothFrame
+                selectedTemplate={selectedTemplate}
+                templateAspectRatio={templateAspectRatio}
+                customFrameImage={customFrameImage}
+                customDetectedSlots={activeDetectedSlots}
+                capturedPhotos={capturedPhotos}
+                photoTransforms={photoTransforms}
+                setPhotoTransforms={setPhotoTransforms}
+                selectedSlotIndex={selectedSlotIndex}
+                setSelectedSlotIndex={setSelectedSlotIndex}
+                currentCaptureIndex={0}
+                state="idle"
+                stream={null}
+                isMirrored={isMirrored}
+                activeFilter={activeFilter}
+                placedStickers={placedStickers}
+                setPlacedStickers={setPlacedStickers}
+                selectedStickerId={selectedStickerId}
+                setSelectedStickerId={setSelectedStickerId}
+                handleUploadSingleSlot={triggerSingleSlotUpload}
+                onDropFileOnSlot={handleDropFileOnSlot}
+                mode="setup"
+                containerRef={containerRef}
+                allStickers={allSelectableStickers}
+                customFramePosition={customFramePosition}
+                setCustomFramePosition={setCustomFramePosition}
+                isAdjustingFrame={isAdjustingFrame}
+                customCaption={customCaption}
+                showDate={showDate}
+              />
+            </div>
+
+            <p className="text-xs text-[#94949E] text-center mt-3">
+              Klik slot di atas untuk mengisi satu foto, atau mulai sesi di bawah.
+            </p>
+
+            {/* Primary & Secondary Capture CTAs */}
+            <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-4">
+              <button
+                type="button"
+                onClick={() => startCamera(facingMode)}
+                disabled={isStartingCamera}
+                className="min-h-[48px] px-4 py-3 rounded-xl bg-white text-[#09090B] hover:bg-zinc-200 disabled:opacity-60 font-semibold text-sm flex items-center justify-center gap-2 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#111113]"
+              >
+                {isStartingCamera ? (
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Camera className="w-4 h-4" aria-hidden="true" />
+                )}
+                Buka Kamera
+              </button>
+
+              <button
+                type="button"
+                onClick={() => bulkUploadInputRef.current?.click()}
+                className="min-h-[48px] px-4 py-3 rounded-xl bg-[#18181B] text-[#FAFAFA] hover:bg-zinc-800 border border-zinc-700 font-semibold text-sm flex items-center justify-center gap-2 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#111113]"
+              >
+                <ImagePlus className="w-4 h-4" aria-hidden="true" />
+                Upload Foto
+              </button>
+            </div>
+          </section>
+
+          {/* Right Configuration Panel */}
+          <section
+            aria-label="Katalog frame, filter, dan teks"
+            className="lg:col-span-7 bg-[#111113] border border-zinc-800 rounded-2xl p-5 sm:p-6 space-y-5"
+          >
+            {/* Inspector Tabs */}
+            <div
+              role="tablist"
+              aria-label="Menu pengaturan booth"
+              className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-[#09090B] border border-zinc-800"
+            >
+              {[
+                { id: 'frames' as StudioTab, label: `Frame (${templates.length})`, icon: Layers },
+                { id: 'filters' as StudioTab, label: `Filter (${PHOTO_FILTERS.length})`, icon: SlidersHorizontal },
+                { id: 'caption' as StudioTab, label: 'Teks & Tanggal', icon: Type },
+              ].map(({ id, label, icon: Icon }) => {
+                const active = setupTab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setSetupTab(id)}
+                    className={`min-h-[42px] px-3 py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                      active
+                        ? 'bg-white text-[#09090B]'
+                        : 'text-[#A1A1AA] hover:text-white hover:bg-[#18181B]'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {setupTab === 'frames' && (
+              <FramePickerPanel
+                templates={templates}
+                selectedTemplate={selectedTemplate}
+                onSelectTemplate={handleSelectTemplate}
+                customFrameConfig={customFrameConfig}
+                customFrameImage={customFrameImage}
+                onSaveCustomConfig={saveCustomConfig}
+                onCustomFrameUpload={handleCustomFrameUpload}
+                isAdjustingFrame={isAdjustingFrame}
+                setIsAdjustingFrame={setIsAdjustingFrame}
+                customFramePosition={customFramePosition}
+                setCustomFramePosition={setCustomFramePosition}
+                hasSanityTemplates={initialSanityTemplates.length > 0}
+                customDetectedSlotsCount={customDetectedSlots?.length ?? 0}
+                useAutoDetectedSlots={useAutoDetectedSlots}
+                onToggleAutoDetectedSlots={() => setUseAutoDetectedSlots((v) => !v)}
+              />
+            )}
+
+            {setupTab === 'filters' && (
+              <div className="space-y-3">
+                <p className="text-xs text-[#A1A1AA]">
+                  Filter diterapkan langsung ke kamera dan hasil foto HD. Anda tetap bisa mengganti filter setelah memotret.
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {PHOTO_FILTERS.map((filter) => {
+                    const active = activeFilter.id === filter.id;
+                    return (
+                      <button
+                        key={filter.id}
+                        type="button"
+                        onClick={() => setActiveFilter(filter)}
+                        aria-pressed={active}
+                        className={`min-h-[48px] px-3 py-2.5 rounded-xl border flex items-center gap-2.5 text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                          active
+                            ? 'bg-white text-[#09090B] border-white font-semibold'
+                            : 'bg-[#18181B] text-[#FAFAFA] border-zinc-800 hover:border-zinc-600'
+                        }`}
+                      >
+                        <span
+                          className="w-6 h-6 rounded-full shrink-0 border border-black/20"
+                          style={{ background: filter.swatch }}
+                          aria-hidden="true"
+                        />
+                        <span className="text-xs truncate">{filter.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
-            <button
-              onClick={startCamera}
-              className="flex items-center gap-2 px-8 py-4 rounded-full bg-zinc-100 text-zinc-950 hover:bg-white hover:scale-105 transition-all duration-300 font-semibold text-base shadow-xl shadow-zinc-950/20 active:scale-95"
-            >
-              <Camera className="w-5 h-5" />
-              Aktifkan Kamera
-            </button>
-          </motion.div>
-        )}
-
-        {/* STATE: READY, COUNTDOWN, FLASH & REVIEW */}
-        {(state === 'ready' || state === 'countdown' || state === 'flash' || state === 'review') && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="w-full bg-zinc-900/50 backdrop-blur-xl border border-zinc-800 rounded-3xl p-5 flex flex-col lg:flex-row gap-6 shadow-2xl shadow-black/50"
-          >
-            {/* Column 1: Main Live Camera Feed */}
-            <div className="flex-1 min-w-0 flex flex-col gap-4">
-              <div className="relative aspect-4/3 bg-black rounded-2xl overflow-hidden border border-zinc-800 shadow-inner">
-                {stream && (
-                  <video 
-                    ref={el => {
-                      videoRef.current = el;
-                      if (el && stream) el.srcObject = stream;
-                    }}
-                    autoPlay 
-                    playsInline 
-                    muted
-                    className={`w-full h-full object-cover transition-all duration-300 ${activeFilter.class} ${isMirrored ? '-scale-x-100' : ''}`}
+            {setupTab === 'caption' && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label
+                    htmlFor="pb-setup-caption"
+                    className="block text-sm font-medium text-[#FAFAFA]"
+                  >
+                    Teks Footer Frame
+                  </label>
+                  <input
+                    id="pb-setup-caption"
+                    type="text"
+                    maxLength={36}
+                    value={customCaption}
+                    onChange={(e) => setCustomCaption(e.target.value)}
+                    placeholder={activeSpec.defaultCaption}
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl bg-[#09090B] border border-zinc-700 text-sm text-white placeholder:text-[#94949E] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                   />
-                )}
+                  <p className="text-xs text-[#94949E]">
+                    Kosongkan untuk memakai judul bawaan frame ({activeSpec.defaultCaption}).
+                  </p>
+                </div>
 
-                {/* Countdown Overlay */}
-                <AnimatePresence>
-                  {state === 'countdown' && (
-                    <motion.div 
-                      initial={{ opacity: 0, scale: 0.5 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 1.5 }}
-                      key={countdown}
-                      className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-xs z-10"
-                    >
-                      <span className="text-8xl font-black tracking-tight text-white drop-shadow-lg select-none">
-                        {countdown}
-                      </span>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {/* Review Overlay */}
-                {state === 'review' && (
-                  <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center p-6 text-center select-none z-10 animate-fade-in">
-                    <Sparkles className="w-12 h-12 text-amber-400 mb-3 animate-bounce" />
-                    <h3 className="text-lg font-bold text-white mb-1">Sesi Foto Selesai</h3>
-                    <p className="text-zinc-300 text-xs max-w-xs leading-relaxed">
-                      {"Klik tombol ulang ("}<RotateCcw className="inline w-3.5 h-3.5 mx-0.5" />{") pada slot foto di bingkai untuk mengulang, atau klik \"Konfirmasi & Cetak\" untuk memproses."}
+                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-[#09090B] border border-zinc-800">
+                  <div>
+                    <label htmlFor="pb-setup-show-date" className="text-sm font-medium text-white block">
+                      Tampilkan Tanggal Cetak
+                    </label>
+                    <p className="text-xs text-[#94949E]">
+                      Mencetak tanggal hari ini di bagian bawah frame.
                     </p>
                   </div>
-                )}
-
-                {/* Progress bar */}
-                {capturedPhotos.length > 0 && (
-                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 bg-black/60 px-3 py-1.5 rounded-full border border-white/10 z-10">
-                    {Array.from({ length: selectedTemplate.maxPhotos }).map((_, idx) => (
-                      <div 
-                        key={idx}
-                        className={`w-2.5 h-2.5 rounded-full transition-colors duration-300 ${
-                          idx < capturedPhotos.length 
-                            ? 'bg-zinc-100' 
-                            : idx === currentCaptureIndex && state === 'countdown' 
-                            ? 'bg-amber-400 animate-pulse'
-                            : 'bg-zinc-600'
-                        }`}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Controls below Feed */}
-              <div className="flex items-center justify-between gap-4 px-2">
-                <button
-                  onClick={handleBackToIdle}
-                  disabled={state === 'countdown' || state === 'flash'}
-                  className="flex items-center gap-1.5 text-zinc-400 hover:text-zinc-100 text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-semibold"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                  Kembali
-                </button>
-                <button
-                  onClick={() => setIsMirrored(prev => !prev)}
-                  disabled={state === 'countdown' || state === 'flash'}
-                  className="p-2.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white transition-colors text-xs flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Mirror</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Column 2: Live Template Preview */}
-            <div className="shrink-0 flex flex-col items-center justify-center gap-2 border-t lg:border-t-0 lg:border-l lg:border-r border-zinc-800/60 pt-4 lg:pt-0 lg:px-6 min-w-[190px] lg:min-w-[260px]">
-              <span className="text-2xs font-bold uppercase tracking-widest text-zinc-500 mb-2">Live Frame Preview</span>
-              <div className="flex items-center justify-center h-full min-h-[160px]">
-                <PhotoBoothFrame
-                  selectedTemplate={selectedTemplate}
-                  templateAspectRatio={templateAspectRatio}
-                  customFrameImage={customFrameImage}
-                  capturedPhotos={capturedPhotos}
-                  currentCaptureIndex={currentCaptureIndex}
-                  state={state}
-                  stream={stream}
-                  isMirrored={isMirrored}
-                  activeFilter={activeFilter}
-                  placedStickers={placedStickers}
-                  setPlacedStickers={setPlacedStickers}
-                  selectedStickerId={selectedStickerId}
-                  setSelectedStickerId={setSelectedStickerId}
-                  handleRetakeSingleSlot={handleRetakeSingleSlot}
-                  containerRef={containerRef}
-                  mode="setup"
-                  allStickers={allSelectableStickers}
-                  customFramePosition={customFramePosition}
-                  setCustomFramePosition={setCustomFramePosition}
-                  isAdjustingFrame={isAdjustingFrame}
-                />
-              </div>
-            </div>
-
-            {/* Column 3: Configuration & Controls */}
-            <div className="w-full lg:w-64 flex flex-col gap-6 border-t lg:border-t-0 pt-4 lg:pt-0">
-              {state === 'review' ? (
-                <div className="flex flex-col gap-6 h-full justify-between grow animate-fade-in">
-                  <div className="flex flex-col gap-4">
-                    <div className="bg-zinc-950/40 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-2">
-                      <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5" />
-                        Review Foto
-                      </span>
-                      <p className="text-zinc-400 text-xs leading-relaxed">
-                        Klik tombol putar (<RotateCcw className="inline w-3 h-3 mx-0.5" />) pada slot foto di bingkai untuk mengulang foto tersebut, atau klik <strong>Konfirmasi & Cetak</strong> jika sudah puas.
-                      </p>
-                    </div>
-
-                    <div className="flex flex-col gap-2">
-                      <label className="text-xs font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5" />
-                        Pilih Filter
-                      </label>
-                      <div className="grid grid-cols-4 gap-1.5">
-                        {PHOTO_FILTERS.map((filt) => (
-                          <button
-                            key={filt.id}
-                            type="button"
-                            onClick={() => handleFilterChange(filt)}
-                            className={`px-1.5 py-2 rounded-lg text-2xs font-semibold border text-center transition-all duration-305 ${
-                              activeFilter.id === filt.id
-                                ? 'bg-zinc-200 text-zinc-950 border-zinc-200'
-                                : 'bg-zinc-900 border-zinc-850 text-zinc-400 hover:bg-zinc-850 hover:text-zinc-200 hover:border-zinc-700'
-                            }`}
-                          >
-                            {filt.name}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-2.5 mt-auto">
-                    <button
-                      type="button"
-                      onClick={handleConfirmReview}
-                      className="w-full flex items-center justify-center gap-2 px-6 py-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold transition-all duration-300 shadow-lg shadow-emerald-500/10 active:scale-98 cursor-pointer"
-                    >
-                      <Check className="w-5 h-5" />
-                      Konfirmasi & Cetak
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleRetakeAll}
-                      className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-850 hover:text-white transition-all duration-300 font-semibold text-sm active:scale-98 cursor-pointer"
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                      Foto Ulang Semua
-                    </button>
-                  </div>
+                  <input
+                    id="pb-setup-show-date"
+                    type="checkbox"
+                    checked={showDate}
+                    onChange={(e) => setShowDate(e.target.checked)}
+                    className="w-5 h-5 accent-white cursor-pointer"
+                  />
                 </div>
-              ) : (
-                <>
-                  <div className="flex border-b border-zinc-800 pb-2 mb-2">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('layout')}
-                      className={`flex-1 pb-2 text-center text-xs font-bold uppercase tracking-wider transition-colors ${
-                        activeTab === 'layout' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-zinc-500 hover:text-zinc-350'
-                      }`}
-                    >
-                      Bingkai & Layout
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('stickers')}
-                      className={`flex-1 pb-2 text-center text-xs font-bold uppercase tracking-wider transition-colors ${
-                        activeTab === 'stickers' ? 'text-amber-400 border-b-2 border-amber-400' : 'text-zinc-500 hover:text-zinc-350'
-                      }`}
-                    >
-                      Stiker & Filter
-                    </button>
-                  </div>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
 
-                  {activeTab === 'layout' ? (
-                    <>
-                      <div className="flex flex-col gap-2 animate-fade-in">
-                        <label className="text-xs font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5">
-                          <ImageIcon className="w-3.5 h-3.5" />
-                          Pilih Bingkai / Layout
-                        </label>
-                        <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1 scrollbar-hide">
-                          {templates.map((temp) => (
-                            <button
-                              key={temp._id}
-                              type="button"
-                              onClick={() => state !== 'countdown' && state !== 'flash' && handleSelectTemplate(temp)}
-                              disabled={state === 'countdown' || state === 'flash'}
-                              className={`w-full text-left p-3 rounded-xl border text-sm transition-all duration-350 flex items-center justify-between group disabled:opacity-50 disabled:cursor-not-allowed ${
-                                selectedTemplate._id === temp._id
-                                  ? 'bg-zinc-100 text-zinc-950 border-zinc-100 font-semibold'
-                                  : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-850 hover:border-zinc-700'
-                              }`}
-                            >
-                              <div className="flex flex-col">
-                                <span>{temp.name}</span>
-                                <span className={`text-2xs ${selectedTemplate._id === temp._id ? 'text-zinc-500' : 'text-zinc-500 group-hover:text-zinc-400'}`}>
-                                  {temp.layout.toUpperCase()} Layout • {temp.maxPhotos} Jepretan
-                                </span>
-                              </div>
-                              {selectedTemplate._id === temp._id && <Check className="w-4 h-4 text-zinc-950 shrink-0" />}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+      {/* ==================== STAGE 2: CAMERA CAPTURE & REVIEW ==================== */}
+      {(state === 'ready' || state === 'countdown' || state === 'flash' || state === 'review') && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Left Camera Viewfinder */}
+          <section
+            aria-label="Kamera photo booth"
+            className="lg:col-span-8 bg-[#111113] border border-zinc-800 rounded-2xl p-4 sm:p-5 space-y-4"
+          >
+            {/* Camera Control Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={handleBackToIdle}
+                className="min-h-[40px] px-3 py-2 rounded-lg bg-[#18181B] border border-zinc-700 hover:bg-zinc-800 text-xs font-medium text-[#FAFAFA] flex items-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
+                Ganti Frame
+              </button>
 
-                      {selectedTemplate._id === 'custom-user-frame' && (() => {
-                        const customDefaults = DEFAULT_CUSTOM_PADDINGS[customFrameConfig.layout] || DEFAULT_CUSTOM_PADDINGS.strip;
-                        const cTop = typeof customFrameConfig.topPadding === 'number' ? customFrameConfig.topPadding : customDefaults.topPadding;
-                        const cBottom = typeof customFrameConfig.bottomPadding === 'number' ? customFrameConfig.bottomPadding : customDefaults.bottomPadding;
-                        const cSide = typeof customFrameConfig.sidePadding === 'number' ? customFrameConfig.sidePadding : customDefaults.sidePadding;
-                        const cRowSp = typeof customFrameConfig.rowSpacing === 'number' ? customFrameConfig.rowSpacing : customDefaults.rowSpacing;
-                        const cColSp = typeof customFrameConfig.colSpacing === 'number' ? customFrameConfig.colSpacing : customDefaults.colSpacing;
+              {/* Countdown selector + camera toggles */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <div
+                  role="group"
+                  aria-label="Durasi hitung mundur"
+                  className="flex items-center p-0.5 rounded-lg bg-[#09090B] border border-zinc-800"
+                >
+                  {([3, 5, 0] as CountdownMode[]).map((sec) => {
+                    const active = countdownMode === sec;
+                    return (
+                      <button
+                        key={sec}
+                        type="button"
+                        disabled={isCaptureRunning}
+                        onClick={() => setCountdownMode(sec)}
+                        className={`min-h-[34px] px-2.5 rounded-md text-xs font-mono transition-colors cursor-pointer disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                          active ? 'bg-white text-[#09090B] font-semibold' : 'text-[#A1A1AA] hover:text-white'
+                        }`}
+                      >
+                        {sec === 0 ? 'Manual' : `${sec} dtk`}
+                      </button>
+                    );
+                  })}
+                </div>
 
-                        let cCols = 1;
-                        let cRows = 1;
-                        const cIsDoubleStrip = customFrameConfig.layout === 'strip' && templateAspectRatio !== null && templateAspectRatio > 0.45;
-                        if (customFrameConfig.layout === 'strip') {
-                          cCols = cIsDoubleStrip ? 2 : 1;
-                          cRows = cIsDoubleStrip ? Math.ceil(customFrameConfig.maxPhotos / 2) : customFrameConfig.maxPhotos;
-                        } else if (customFrameConfig.layout === 'grid') {
-                          cCols = customFrameConfig.maxPhotos === 1 ? 1 : 2;
-                          cRows = Math.ceil(customFrameConfig.maxPhotos / cCols);
-                        }
+                <button
+                  type="button"
+                  onClick={() => setIsMirrored((m) => !m)}
+                  aria-pressed={isMirrored}
+                  title="Balik cermin kamera"
+                  className={`min-h-[38px] px-2.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                    isMirrored
+                      ? 'bg-white text-[#09090B] border-white'
+                      : 'bg-[#18181B] text-[#D4D4D8] border-zinc-700 hover:bg-zinc-800'
+                  }`}
+                >
+                  <FlipHorizontal2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span className="hidden sm:inline">Mirror</span>
+                </button>
 
-                        const cAvailW = 100 - (cSide * 2);
-                        const autoCWidth = Math.round((cAvailW - (cCols - 1) * cColSp) / cCols);
+                <button
+                  type="button"
+                  onClick={handleToggleFacingCamera}
+                  disabled={isCaptureRunning}
+                  aria-label="Tukar kamera depan dan belakang"
+                  title="Tukar kamera depan/belakang"
+                  className="min-h-[38px] px-2.5 rounded-lg bg-[#18181B] text-[#D4D4D8] border border-zinc-700 hover:bg-zinc-800 hover:text-white disabled:opacity-50 flex items-center gap-1.5 text-xs cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                >
+                  <SwitchCamera className="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
 
-                        const cAvailH = 100 - cTop - cBottom;
-                        const autoCHeight = Math.round((cAvailH - (cRows - 1) * cRowSp) / cRows);
-
-                        const customTemp = customFrameConfig as unknown as { slotWidth?: number; slotHeight?: number };
-                        const currentWidth = typeof customTemp.slotWidth === 'number' 
-                          ? customTemp.slotWidth 
-                          : autoCWidth;
-                        const currentHeight = typeof customTemp.slotHeight === 'number' 
-                          ? customTemp.slotHeight 
-                          : autoCHeight;
-
-                        return (
-                          <div className="flex flex-col gap-3.5 bg-zinc-950/40 p-4 border border-zinc-800 rounded-2xl animate-fade-in text-xs">
-                            <div className="flex flex-col gap-1.5">
-                              <span className="font-bold uppercase text-2xs tracking-wider text-zinc-500">Upload Frame PNG</span>
-                              <input
-                                type="file"
-                                accept="image/png"
-                                onChange={handleCustomFrameUpload}
-                                className="hidden"
-                                id="pb-custom-frame-input"
-                              />
-                              <label
-                                htmlFor="pb-custom-frame-input"
-                                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 text-zinc-200 cursor-pointer font-semibold text-center transition-all"
-                              >
-                                <ImageIcon className="w-3.5 h-3.5" />
-                                {customFrameImage ? 'Ganti Frame PNG' : 'Pilih Frame PNG'}
-                              </label>
-                              {customFrameImage && (
-                                <div className="flex flex-col gap-1.5 mt-1 border-t border-zinc-800/80 pt-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setIsAdjustingFrame(prev => !prev)}
-                                    className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border font-semibold text-center transition-all cursor-pointer ${
-                                      isAdjustingFrame
-                                        ? 'bg-amber-500 text-zinc-950 border-amber-500 hover:bg-amber-400 font-bold'
-                                        : 'bg-zinc-800 hover:bg-zinc-750 border-zinc-700 text-zinc-200'
-                                    }`}
-                                  >
-                                    <Sparkles className="w-3.5 h-3.5" />
-                                    {isAdjustingFrame ? 'Selesai Atur Frame' : 'Atur Posisi & Ukuran Frame'}
-                                  </button>
-                                  
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setCustomFramePosition({ x: 0, y: 0, w: 100, h: 100 });
-                                    }}
-                                    className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-400 hover:text-zinc-200 cursor-pointer font-semibold text-2xs text-center transition-all"
-                                  >
-                                    Reset Posisi Frame
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setCustomFrameImage(null);
-                                      localStorage.removeItem('pb-custom-frame-image');
-                                      localStorage.removeItem('pb-custom-frame-position');
-                                      setCustomFramePosition({ x: 0, y: 0, w: 100, h: 100 });
-                                      setIsAdjustingFrame(false);
-                                    }}
-                                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-red-950/45 hover:bg-red-900/40 border border-red-900/50 text-red-400 cursor-pointer font-semibold text-center transition-all mt-1"
-                                  >
-                                    Hapus Frame
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-
-                            <div className="flex flex-col gap-1">
-                              <span className="font-bold uppercase text-2xs tracking-wider text-zinc-500">Gaya Layout</span>
-                              <div className="grid grid-cols-3 gap-1">
-                                {(['strip', 'grid', 'single'] as const).map((lay) => (
-                                  <button
-                                    key={lay}
-                                    type="button"
-                                    onClick={() => {
-                                      const newConfig = { 
-                                        ...customFrameConfig, 
-                                        layout: lay,
-                                        maxPhotos: lay === 'single' ? 1 : lay === 'grid' ? 6 : 4 
-                                      };
-                                      saveCustomConfig(newConfig);
-                                    }}
-                                    className={`py-1.5 rounded-md font-semibold border text-center transition-all ${
-                                      customFrameConfig.layout === lay
-                                        ? 'bg-zinc-200 text-zinc-950 border-zinc-200'
-                                        : 'bg-zinc-900 border-zinc-850 text-zinc-400 hover:bg-zinc-800'
-                                    }`}
-                                  >
-                                    {lay === 'strip' ? 'Strip' : lay === 'grid' ? 'Grid' : 'Single'}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-
-                            <div className="flex flex-col gap-1">
-                              <div className="flex justify-between items-center">
-                                <span className="font-bold uppercase text-2xs tracking-wider text-zinc-500">Jumlah Foto</span>
-                                <span className="font-semibold text-zinc-300">{customFrameConfig.maxPhotos}x</span>
-                              </div>
-                              <input
-                                type="range"
-                                min="1"
-                                max={customFrameConfig.layout === 'single' ? '1' : '6'}
-                                value={customFrameConfig.maxPhotos}
-                                onChange={(e) => {
-                                  const newConfig = { ...customFrameConfig, maxPhotos: parseInt(e.target.value) };
-                                  saveCustomConfig(newConfig);
-                                }}
-                                className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                              />
-                            </div>
-
-                            <div className="flex flex-col gap-2 mt-1 border-t border-zinc-800/80 pt-2.5">
-                              <span className="font-bold uppercase text-2xs tracking-wider text-zinc-500 block mb-1">Posisi Slot Foto</span>
-                              
-                              <div className="flex flex-col gap-1">
-                                <div className="flex justify-between text-3xs text-zinc-500 font-semibold">
-                                  <span>Jarak Atas</span>
-                                  <span>{customFrameConfig.topPadding}%</span>
-                                </div>
-                                <input
-                                  type="range"
-                                  min="-50"
-                                  max="100"
-                                  value={customFrameConfig.topPadding ?? 10}
-                                  onChange={(e) => {
-                                    const newConfig = { ...customFrameConfig, topPadding: parseFloat(e.target.value) };
-                                    saveCustomConfig(newConfig);
-                                  }}
-                                  className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-zinc-400"
-                                />
-                              </div>
-
-                              <div className="flex flex-col gap-1">
-                                <div className="flex justify-between text-3xs text-zinc-500 font-semibold">
-                                  <span>Jarak Bawah</span>
-                                  <span>{customFrameConfig.bottomPadding}%</span>
-                                </div>
-                                <input
-                                  type="range"
-                                  min="-50"
-                                  max="100"
-                                  value={customFrameConfig.bottomPadding ?? 10}
-                                  onChange={(e) => {
-                                    const newConfig = { ...customFrameConfig, bottomPadding: parseFloat(e.target.value) };
-                                    saveCustomConfig(newConfig);
-                                  }}
-                                  className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-zinc-400"
-                                />
-                              </div>
-
-                              <div className="flex flex-col gap-1">
-                                <div className="flex justify-between text-3xs text-zinc-500 font-semibold">
-                                  <span>Jarak Samping</span>
-                                  <span>{customFrameConfig.sidePadding}%</span>
-                                </div>
-                                <input
-                                  type="range"
-                                  min="-50"
-                                  max="100"
-                                  value={customFrameConfig.sidePadding ?? 10}
-                                  onChange={(e) => {
-                                    const newConfig = { ...customFrameConfig, sidePadding: parseFloat(e.target.value) };
-                                    saveCustomConfig(newConfig);
-                                  }}
-                                  className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-zinc-400"
-                                />
-                              </div>
-
-                              {customFrameConfig.layout !== 'single' && (
-                                <div className="flex flex-col gap-1">
-                                  <div className="flex justify-between text-3xs text-zinc-500 font-semibold">
-                                    <span>Jarak Antar Baris</span>
-                                    <span>{customFrameConfig.rowSpacing}%</span>
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min="-20"
-                                    max="50"
-                                    value={customFrameConfig.rowSpacing ?? 5}
-                                    onChange={(e) => {
-                                      const newConfig = { ...customFrameConfig, rowSpacing: parseFloat(e.target.value) };
-                                      saveCustomConfig(newConfig);
-                                    }}
-                                    className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-zinc-400"
-                                  />
-                                </div>
-                              )}
-
-                              {(customFrameConfig.layout === 'grid' || customFrameConfig.layout === 'strip') && (
-                                <div className="flex flex-col gap-1">
-                                  <div className="flex justify-between text-3xs text-zinc-500 font-semibold">
-                                    <span>Jarak Antar Kolom</span>
-                                    <span>{customFrameConfig.colSpacing}%</span>
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min="-20"
-                                    max="50"
-                                    value={customFrameConfig.colSpacing ?? 5}
-                                    onChange={(e) => {
-                                      const newConfig = { ...customFrameConfig, colSpacing: parseFloat(e.target.value) };
-                                      saveCustomConfig(newConfig);
-                                    }}
-                                    className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-zinc-400"
-                                  />
-                                </div>
-                              )}
-
-                              {/* Custom size overrides */}
-                              <div className="flex flex-col gap-1 border-t border-zinc-800/80 pt-2.5">
-                                <div className="flex justify-between text-3xs text-zinc-500 font-semibold">
-                                  <span>Lebar Kamera (Ukuran)</span>
-                                  <span>{currentWidth}%</span>
-                                </div>
-                                <input
-                                  type="range"
-                                  min="5"
-                                  max="200"
-                                  value={currentWidth}
-                                  onChange={(e) => {
-                                    const newConfig = { ...customFrameConfig, slotWidth: parseFloat(e.target.value) };
-                                    saveCustomConfig(newConfig);
-                                  }}
-                                  className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                                />
-                              </div>
-
-                              <div className="flex flex-col gap-1">
-                                <div className="flex justify-between text-3xs text-zinc-500 font-semibold">
-                                  <span>Tinggi Kamera (Ukuran)</span>
-                                  <span>{currentHeight}%</span>
-                                </div>
-                                <input
-                                  type="range"
-                                  min="5"
-                                  max="200"
-                                  value={currentHeight}
-                                  onChange={(e) => {
-                                    const newConfig = { ...customFrameConfig, slotHeight: parseFloat(e.target.value) };
-                                    saveCustomConfig(newConfig);
-                                  }}
-                                  className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                                />
-                              </div>
-
-                              {(customTemp.slotWidth !== undefined || customTemp.slotHeight !== undefined) && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const nextConfig = { ...customFrameConfig } as unknown as { slotWidth?: number; slotHeight?: number };
-                                    delete nextConfig.slotWidth;
-                                    delete nextConfig.slotHeight;
-                                    saveCustomConfig(nextConfig as unknown as PhotoboothTemplate);
-                                  }}
-                                  className="w-full py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-400 hover:text-zinc-200 text-3xs uppercase tracking-wider transition-colors cursor-pointer mt-1"
-                                >
-                                  Gunakan Ukuran Kamera Otomatis
-                                </button>
-                              )}
-
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const nextConfig = {
-                                    _id: 'custom-user-frame',
-                                    name: 'Frame Custom (Buat Sendiri)',
-                                    maxPhotos: customFrameConfig.maxPhotos,
-                                    layout: customFrameConfig.layout,
-                                    isActive: true,
-                                    topPadding: 3,
-                                    bottomPadding: 8,
-                                    sidePadding: 3,
-                                    rowSpacing: 3,
-                                    colSpacing: 3,
-                                  };
-                                  saveCustomConfig(nextConfig);
-                                }}
-                                className="w-full py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-500 hover:text-zinc-300 text-3xs uppercase tracking-wider transition-colors cursor-pointer mt-1"
-                              >
-                                Reset Posisi & Layout Default
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </>
+                <button
+                  type="button"
+                  onClick={() => setSoundEnabled((s) => !s)}
+                  aria-pressed={soundEnabled}
+                  aria-label={soundEnabled ? 'Matikan suara shutter' : 'Aktifkan suara shutter'}
+                  title={soundEnabled ? 'Suara aktif' : 'Suara dimatikan'}
+                  className="min-h-[38px] px-2.5 rounded-lg bg-[#18181B] text-[#D4D4D8] border border-zinc-700 hover:bg-zinc-800 hover:text-white flex items-center justify-center cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                >
+                  {soundEnabled ? (
+                    <Volume2 className="w-3.5 h-3.5" aria-hidden="true" />
                   ) : (
-                    <>
-                      <div className="bg-zinc-950/40 p-4 border border-zinc-800 rounded-2xl flex flex-col gap-4 animate-fade-in">
-                        <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5" />
-                          Tempel Stiker Lucu
-                        </span>
-                        
-                        <div className="flex flex-col gap-2">
-                          <input
-                            type="file"
-                            accept="image/*"
-                            multiple
-                            onChange={handleStickerUpload}
-                            className="hidden"
-                            id="pb-custom-sticker-input-setup"
-                          />
-                          <label
-                            htmlFor="pb-custom-sticker-input-setup"
-                            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 text-zinc-200 cursor-pointer font-semibold text-2xs text-center transition-all"
-                          >
-                            <ImageIcon className="w-3.5 h-3.5" />
-                            Upload Stiker Custom (.png/.jpg)
-                          </label>
-                        </div>
-
-                        <div className="grid grid-cols-4 gap-2 bg-zinc-900/50 p-2 rounded-xl border border-zinc-850/60 max-h-36 overflow-y-auto">
-                          {allSelectableStickers.map((asset) => (
-                            <div key={asset.id} className="relative group/stickerItem w-10 h-10 flex items-center justify-center">
-                              <button
-                                type="button"
-                                onClick={() => handleAddSticker(asset.id)}
-                                draggable="true"
-                                onDragStart={(e) => {
-                                  e.dataTransfer.setData('text/plain', asset.id);
-                                }}
-                                className="w-full h-full hover:scale-110 active:scale-95 transition-transform duration-200 cursor-pointer flex items-center justify-center p-1.5 rounded-lg bg-zinc-900 border border-zinc-850 hover:bg-zinc-850 hover:border-zinc-700 overflow-hidden"
-                                title={asset.name}
-                              >
-                                {asset.isCustom && asset.src ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img 
-                                    src={asset.src} 
-                                    alt={asset.name} 
-                                    className="w-full h-full object-contain pointer-events-none" 
-                                  />
-                                ) : (
-                                  <div 
-                                    className="w-full h-full flex items-center justify-center pointer-events-none" 
-                                    dangerouslySetInnerHTML={{ __html: asset.svg }} 
-                                  />
-                                )}
-                              </button>
-                              {asset.isCustom && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => handleDeleteUploadedSticker(asset.id, e)}
-                                  className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 rounded-full flex items-center justify-center text-white text-[8px] font-bold border border-white shadow-lg cursor-pointer z-10 opacity-0 group-hover/stickerItem:opacity-100 transition-opacity"
-                                  title="Hapus Stiker Custom"
-                                >
-                                  ✕
-                                </button>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-
-                        <div className="text-[10px] text-zinc-550 leading-tight">
-                          💡 Klik stiker untuk menempel di tengah, atau <strong>drag & drop</strong> stiker langsung ke frame preview!
-                        </div>
-
-                        {selectedStickerId && (() => {
-                          const sticker = placedStickers.find(s => s.id === selectedStickerId);
-                          if (!sticker) return null;
-                          return (
-                            <div className="flex flex-col gap-3.5 bg-zinc-900/60 p-3.5 border border-zinc-800/80 rounded-xl text-xs">
-                              <div className="flex justify-between items-center text-2xs uppercase font-bold text-zinc-555">
-                                <span>Pengaturan Stiker</span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteSticker(sticker.id)}
-                                  className="text-red-400 hover:text-red-300 font-semibold"
-                                >
-                                  Hapus
-                                </button>
-                              </div>
-
-                              <div className="flex flex-col gap-1">
-                                <div className="flex justify-between text-3xs text-zinc-500 font-semibold">
-                                  <span>Ukuran</span>
-                                  <span>{sticker.size}%</span>
-                                </div>
-                                <input
-                                  type="range"
-                                  min="5"
-                                  max="35"
-                                  value={sticker.size}
-                                  onChange={(e) => {
-                                    const newSize = parseInt(e.target.value);
-                                    setPlacedStickers(prev => prev.map(s => s.id === sticker.id ? { ...s, size: newSize } : s));
-                                  }}
-                                  className="w-full h-1 bg-zinc-850 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                                />
-                              </div>
-
-                              <div className="flex flex-col gap-1">
-                                <div className="flex justify-between text-3xs text-zinc-555 font-semibold">
-                                  <span>Putaran</span>
-                                  <span>{sticker.rotation}°</span>
-                                </div>
-                                <input
-                                  type="range"
-                                  min="-180"
-                                  max="180"
-                                  value={sticker.rotation}
-                                  onChange={(e) => {
-                                    const newRot = parseInt(e.target.value);
-                                    setPlacedStickers(prev => prev.map(s => s.id === sticker.id ? { ...s, rotation: newRot } : s));
-                                  }}
-                                  className="w-full h-1 bg-zinc-850 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                                />
-                              </div>
-                            </div>
-                          );
-                        })()}
-
-                        {placedStickers.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setPlacedStickers([]);
-                              setSelectedStickerId(null);
-                            }}
-                            className="w-full py-1.5 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-zinc-300 font-semibold text-3xs uppercase tracking-wider transition-colors cursor-pointer"
-                          >
-                            Hapus Semua Stiker
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="flex flex-col gap-2 animate-fade-in">
-                        <label className="text-xs font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5" />
-                          Pilih Filter
-                        </label>
-                        <div className="grid grid-cols-4 gap-1.5">
-                          {PHOTO_FILTERS.map((filt) => (
-                            <button
-                              key={filt.id}
-                              type="button"
-                              onClick={() => handleFilterChange(filt)}
-                              className={`px-1.5 py-2 rounded-lg text-2xs font-semibold border text-center transition-all duration-300 ${
-                                activeFilter.id === filt.id
-                                  ? 'bg-zinc-200 text-zinc-950 border-zinc-200'
-                                  : 'bg-zinc-900 border-zinc-850 text-zinc-400 hover:bg-zinc-850 hover:text-zinc-200 hover:border-zinc-700'
-                              }`}
-                            >
-                              {filt.name}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </>
+                    <VolumeX className="w-3.5 h-3.5" aria-hidden="true" />
                   )}
+                </button>
+              </div>
+            </div>
+
+            {/* Live Camera Stage */}
+            <div className="relative aspect-[4/3] w-full rounded-xl overflow-hidden bg-[#09090B] border border-zinc-800">
+              {stream ? (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`w-full h-full object-cover ${isMirrored ? '-scale-x-100' : ''}`}
+                  style={{
+                    filter:
+                      activeFilter.cssFilter && activeFilter.cssFilter !== 'none'
+                        ? activeFilter.cssFilter
+                        : undefined,
+                  }}
+                />
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-[#A1A1AA]">
+                  <Loader2 className="w-6 h-6 animate-spin" aria-hidden="true" />
+                  <span className="text-xs font-mono">Menghubungkan kamera...</span>
+                </div>
+              )}
+
+              {/* Slot Counter HUD */}
+              <div className="absolute top-3 left-3 px-3 py-1.5 rounded-lg bg-black/75 border border-white/15 text-xs font-mono text-white flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-white" aria-hidden="true" />
+                <span>
+                  Slot {Math.min(currentCaptureIndex + 1, selectedTemplate.maxPhotos)} /{' '}
+                  {selectedTemplate.maxPhotos}
+                </span>
+                <span className="text-[#A1A1AA]">• {activeFilter.name}</span>
+              </div>
+
+              {/* Countdown Number Overlay */}
+              {state === 'countdown' && (
+                <div
+                  aria-live="assertive"
+                  className="absolute inset-0 flex items-center justify-center bg-black/25 pointer-events-none"
+                >
+                  <span className="text-7xl sm:text-8xl font-bold font-mono text-white drop-shadow-[0_6px_28px_rgba(0,0,0,0.85)]">
+                    {countdown}
+                  </span>
+                </div>
+              )}
+
+              {/* Camera Flash Overlay */}
+              {state === 'flash' && (
+                <div className="absolute inset-0 bg-white pointer-events-none" />
+              )}
+
+              {/* Review Overlay Hint */}
+              {state === 'review' && (
+                <div className="absolute inset-x-3 bottom-3 px-4 py-3 rounded-xl bg-black/85 border border-white/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <p className="text-xs sm:text-sm text-white">
+                    Semua {selectedTemplate.maxPhotos} foto selesai. Klik ikon ulang di pratinjau kanan jika ingin mengulang slot tertentu.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Quick Filter Strip */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-mono">
+              {PHOTO_FILTERS.map((filter) => {
+                const active = activeFilter.id === filter.id;
+                return (
+                  <button
+                    key={filter.id}
+                    type="button"
+                    onClick={() => setActiveFilter(filter)}
+                    className={`min-h-[36px] px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap flex items-center gap-1.5 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                      active
+                        ? 'bg-white text-[#09090B] font-semibold'
+                        : 'bg-[#18181B] text-[#D4D4D8] border border-zinc-800 hover:bg-zinc-800'
+                    }`}
+                  >
+                    <span
+                      className="w-3 h-3 rounded-full shrink-0 border border-black/25"
+                      style={{ background: filter.swatch }}
+                      aria-hidden="true"
+                    />
+                    {filter.name}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Primary Capture Action Row */}
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+              {state === 'ready' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleStartOrSnapShutter}
+                    disabled={!stream}
+                    className="min-h-[48px] px-7 py-3 rounded-xl bg-white text-[#09090B] hover:bg-zinc-200 disabled:opacity-50 font-semibold text-sm flex items-center gap-2 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#111113]"
+                  >
+                    <Camera className="w-4 h-4" aria-hidden="true" />
+                    {countdownMode === 0
+                      ? `Ambil Foto ${Math.min(filledCount + 1, selectedTemplate.maxPhotos)}/${selectedTemplate.maxPhotos}`
+                      : `Mulai Sesi (${selectedTemplate.maxPhotos} Foto)`}
+                  </button>
+
+                  {filledCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleGoToEditStudio}
+                      className="min-h-[48px] px-5 py-3 rounded-xl bg-[#18181B] text-white border border-zinc-700 hover:bg-zinc-800 font-medium text-sm flex items-center gap-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                    >
+                      <Check className="w-4 h-4" aria-hidden="true" />
+                      Lanjut Edit ({filledCount}/{selectedTemplate.maxPhotos})
+                    </button>
+                  )}
+                </>
+              )}
+
+              {isCaptureRunning && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearAllTimers();
+                    retakeIndexRef.current = null;
+                    setState(filledCount >= selectedTemplate.maxPhotos ? 'review' : 'ready');
+                  }}
+                  className="min-h-[46px] px-5 py-2.5 rounded-xl bg-[#2A1215] border border-[#B91C1C] text-[#FECACA] hover:bg-[#3A161A] text-sm font-medium flex items-center gap-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                >
+                  <X className="w-4 h-4" aria-hidden="true" />
+                  Batalkan Hitung Mundur
+                </button>
+              )}
+
+              {state === 'review' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleGoToEditStudio}
+                    className="min-h-[48px] px-7 py-3 rounded-xl bg-white text-[#09090B] hover:bg-zinc-200 font-semibold text-sm flex items-center gap-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#111113]"
+                  >
+                    <Check className="w-4 h-4" aria-hidden="true" />
+                    Lanjut ke Stiker & Simpan
+                  </button>
 
                   <button
-                    onClick={startCaptureSession}
-                    disabled={state === 'countdown' || state === 'flash'}
-                    className="w-full flex items-center justify-center gap-2 px-6 py-4 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:bg-zinc-800 disabled:text-zinc-650 disabled:cursor-not-allowed text-zinc-950 font-bold transition-all duration-300 shadow-lg shadow-amber-500/10 active:scale-98 mt-auto cursor-pointer"
+                    type="button"
+                    onClick={handleRetakeAll}
+                    className="min-h-[48px] px-5 py-3 rounded-xl bg-[#18181B] text-[#FAFAFA] border border-zinc-700 hover:bg-zinc-800 font-medium text-sm flex items-center gap-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                   >
-                    <Camera className="w-5 h-5" />
-                    Mulai Berfoto ({selectedTemplate.maxPhotos}x)
+                    <RefreshCw className="w-4 h-4" aria-hidden="true" />
+                    Ulang Semua
                   </button>
                 </>
               )}
             </div>
-          </motion.div>
-        )}
+          </section>
 
-        {/* STATE: PROCESSING */}
-        {state === 'processing' && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="w-full max-w-md bg-zinc-900/50 backdrop-blur-xl border border-zinc-800 rounded-3xl p-10 flex flex-col items-center justify-center text-center gap-4 shadow-2xl shadow-black/50"
+          {/* Right Live Frame Progress Strip */}
+          <aside
+            aria-label="Hasil sementara frame"
+            className="lg:col-span-4 bg-[#111113] border border-zinc-800 rounded-2xl p-5 flex flex-col items-center"
           >
-            <Loader2 className="w-10 h-10 text-zinc-400 animate-spin" />
-            <p className="font-semibold text-lg">Membuat Kolase Foto...</p>
-            <p className="text-zinc-400 text-xs max-w-xs">Foto Anda sedang digabungkan dan dibakar dengan filter dan bingkai pilihan.</p>
-          </motion.div>
-        )}
-
-        {/* STATE: PREVIEW */}
-        {state === 'preview' && (
-          <motion.div 
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="w-full flex flex-col lg:flex-row gap-8 items-start justify-center animate-fade-in"
-          >
-            {/* Left Column: Frame representation */}
-            <div className="relative p-4 md:p-6 rounded-2xl bg-zinc-900/40 backdrop-blur-md border border-white/5 shadow-2xl flex justify-center items-center select-none w-full lg:max-w-md">
-              <div className="absolute inset-0 bg-linear-to-b from-white/5 to-transparent rounded-2xl pointer-events-none" />
-              
-              <div className="relative flex justify-center items-center w-full">
-                <PhotoBoothFrame
-                  selectedTemplate={selectedTemplate}
-                  templateAspectRatio={templateAspectRatio}
-                  customFrameImage={customFrameImage}
-                  capturedPhotos={capturedPhotos}
-                  currentCaptureIndex={currentCaptureIndex}
-                  state={state}
-                  stream={stream}
-                  isMirrored={isMirrored}
-                  activeFilter={activeFilter}
-                  placedStickers={placedStickers}
-                  setPlacedStickers={setPlacedStickers}
-                  selectedStickerId={selectedStickerId}
-                  setSelectedStickerId={setSelectedStickerId}
-                  handleRetakeSingleSlot={handleRetakeSingleSlot}
-                  containerRef={containerRef}
-                  mode="preview"
-                  allStickers={allSelectableStickers}
-                  customFramePosition={customFramePosition}
-                  setCustomFramePosition={setCustomFramePosition}
-                  isAdjustingFrame={isAdjustingFrame}
-                />
-              </div>
+            <div className="w-full flex items-center justify-between mb-3">
+              <span className="text-xs font-mono uppercase tracking-wider text-[#94949E]">
+                Live Strip
+              </span>
+              <span className="text-xs font-mono text-[#FAFAFA]">
+                {filledCount}/{selectedTemplate.maxPhotos} terisi
+              </span>
             </div>
 
-            {/* Right Column: Settings, Stickers, & Filters */}
-            <div className="w-full lg:w-80 flex flex-col gap-6">
-              <div className="bg-zinc-900/50 backdrop-blur-xl border border-zinc-800 rounded-3xl p-5 flex flex-col gap-4">
-                <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  Tempel Stiker Lucu
+            <div className="w-full py-4 px-2 rounded-xl bg-[#09090B] border border-zinc-800/80 flex items-center justify-center">
+              <PhotoBoothFrame
+                selectedTemplate={selectedTemplate}
+                templateAspectRatio={templateAspectRatio}
+                customFrameImage={customFrameImage}
+                customDetectedSlots={activeDetectedSlots}
+                capturedPhotos={capturedPhotos}
+                photoTransforms={photoTransforms}
+                setPhotoTransforms={setPhotoTransforms}
+                selectedSlotIndex={selectedSlotIndex}
+                setSelectedSlotIndex={setSelectedSlotIndex}
+                currentCaptureIndex={currentCaptureIndex}
+                state={state}
+                stream={stream}
+                isMirrored={isMirrored}
+                activeFilter={activeFilter}
+                placedStickers={placedStickers}
+                setPlacedStickers={setPlacedStickers}
+                selectedStickerId={selectedStickerId}
+                setSelectedStickerId={setSelectedStickerId}
+                handleRetakeSingleSlot={handleRetakeSingleSlot}
+                handleUploadSingleSlot={triggerSingleSlotUpload}
+                onDropFileOnSlot={handleDropFileOnSlot}
+                mode="capture"
+                containerRef={containerRef}
+                allStickers={allSelectableStickers}
+                customFramePosition={customFramePosition}
+                setCustomFramePosition={setCustomFramePosition}
+                isAdjustingFrame={false}
+                customCaption={customCaption}
+                showDate={showDate}
+              />
+            </div>
+
+            <p className="text-xs text-[#94949E] text-center mt-3">
+              {state === 'review'
+                ? 'Arahkan kursor atau sentuh foto di atas untuk memotret ulang atau mengganti slot.'
+                : 'Setiap foto otomatis masuk ke slot frame secara real-time.'}
+            </p>
+          </aside>
+        </div>
+      )}
+
+      {/* ==================== STAGE 3: EDIT STUDIO (STICKERS, FRAME SWITCH, HD EXPORT) ==================== */}
+      {state === 'preview' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Left Interactive Result Preview */}
+          <section
+            aria-label="Kanvas hasil akhir photo booth"
+            className="lg:col-span-5 bg-[#111113] border border-zinc-800 rounded-2xl p-5 sm:p-6 flex flex-col items-center"
+          >
+            <div className="w-full flex items-center justify-between mb-3">
+              <div>
+                <span className="text-[11px] font-mono uppercase tracking-wider text-[#94949E]">
+                  Hasil Siap Cetak
                 </span>
-                
-                <div className="flex flex-col gap-2">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    onChange={handleStickerUpload}
-                    className="hidden"
-                    id="pb-custom-sticker-input-preview"
-                  />
-                  <label
-                    htmlFor="pb-custom-sticker-input-preview"
-                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 text-zinc-200 cursor-pointer font-semibold text-2xs text-center transition-all"
+                <h2 className="text-base font-semibold text-white">{selectedTemplate.name}</h2>
+              </div>
+              <span className="text-xs font-mono text-[#A1A1AA]">
+                {filledCount}/{selectedTemplate.maxPhotos} foto
+              </span>
+            </div>
+
+            <div className="w-full py-5 px-3 rounded-xl bg-[#09090B] border border-zinc-800/80 flex items-center justify-center">
+              <PhotoBoothFrame
+                selectedTemplate={selectedTemplate}
+                templateAspectRatio={templateAspectRatio}
+                customFrameImage={customFrameImage}
+                customDetectedSlots={activeDetectedSlots}
+                capturedPhotos={capturedPhotos}
+                photoTransforms={photoTransforms}
+                setPhotoTransforms={setPhotoTransforms}
+                selectedSlotIndex={selectedSlotIndex}
+                setSelectedSlotIndex={setSelectedSlotIndex}
+                currentCaptureIndex={-1}
+                state="preview"
+                stream={null}
+                isMirrored={isMirrored}
+                activeFilter={activeFilter}
+                placedStickers={placedStickers}
+                setPlacedStickers={setPlacedStickers}
+                selectedStickerId={selectedStickerId}
+                setSelectedStickerId={setSelectedStickerId}
+                handleUploadSingleSlot={triggerSingleSlotUpload}
+                onDropFileOnSlot={handleDropFileOnSlot}
+                mode="preview"
+                containerRef={containerRef}
+                allStickers={allSelectableStickers}
+                customFramePosition={customFramePosition}
+                setCustomFramePosition={setCustomFramePosition}
+                isAdjustingFrame={isAdjustingFrame}
+                customCaption={customCaption}
+                showDate={showDate}
+              />
+            </div>
+
+            {/* Per-Slot Photo Position & Zoom Controls */}
+            {selectedSlotIndex !== null && capturedPhotos[selectedSlotIndex] ? (
+              <div className="w-full mt-3 p-3.5 rounded-xl bg-[#09090B] border border-zinc-700 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-white">
+                    Atur Foto Slot {selectedSlotIndex + 1} (Seret langsung pada foto)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSlotIndex(null)}
+                    className="text-xs text-[#A1A1AA] hover:text-white px-2 py-0.5 rounded cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                   >
-                    <ImageIcon className="w-3.5 h-3.5" />
-                    Upload Stiker Custom (.png/.jpg)
-                  </label>
+                    Selesai
+                  </button>
                 </div>
 
-                <div className="grid grid-cols-4 gap-2 bg-zinc-950/40 p-3 rounded-2xl border border-zinc-800/60 max-h-36 overflow-y-auto">
-                  {allSelectableStickers.map((asset) => (
-                    <div key={asset.id} className="relative group/stickerItem w-10 h-10 flex items-center justify-center">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <label htmlFor="pb-slot-zoom" className="text-[#A1A1AA]">
+                      Zoom Foto
+                    </label>
+                    <span className="font-mono text-white">
+                      {Math.round(
+                        (photoTransforms[selectedSlotIndex]?.zoom ?? DEFAULT_PHOTO_TRANSFORM.zoom) *
+                          100
+                      )}
+                      %
+                    </span>
+                  </div>
+                  <input
+                    id="pb-slot-zoom"
+                    type="range"
+                    min={1}
+                    max={3}
+                    step={0.05}
+                    value={photoTransforms[selectedSlotIndex]?.zoom ?? DEFAULT_PHOTO_TRANSFORM.zoom}
+                    onChange={(e) => {
+                      const nextZoom = parseFloat(e.target.value);
+                      setPhotoTransforms((prev) => ({
+                        ...prev,
+                        [selectedSlotIndex]: {
+                          ...(prev[selectedSlotIndex] ?? DEFAULT_PHOTO_TRANSFORM),
+                          zoom: nextZoom,
+                        },
+                      }));
+                    }}
+                    className="w-full accent-white cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPhotoTransforms((prev) => ({
+                        ...prev,
+                        [selectedSlotIndex]: { ...DEFAULT_PHOTO_TRANSFORM },
+                      }))
+                    }
+                    className="flex-1 min-h-[36px] px-2.5 py-1.5 rounded-lg bg-[#18181B] border border-zinc-700 hover:bg-zinc-800 text-xs font-medium text-[#FAFAFA] flex items-center justify-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                    Reset Posisi
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => triggerSingleSlotUpload(selectedSlotIndex)}
+                    className="flex-1 min-h-[36px] px-2.5 py-1.5 rounded-lg bg-[#18181B] border border-zinc-700 hover:bg-zinc-800 text-xs font-medium text-[#FAFAFA] flex items-center justify-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  >
+                    <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+                    Ganti Foto
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-[#94949E] text-center mt-3">
+                Seret langsung foto di dalam kotak untuk mengatur posisi, tarik file gambar ke slot, atau seret stiker di atasnya.
+              </p>
+            )}
+
+            {/* Primary Export Buttons */}
+            <div className="w-full space-y-2.5 mt-4">
+              <button
+                type="button"
+                onClick={handleDownloadPNG}
+                disabled={isCompiling}
+                className="w-full min-h-[48px] px-4 py-3 rounded-xl bg-white text-[#09090B] hover:bg-zinc-200 disabled:opacity-60 font-semibold text-sm flex items-center justify-center gap-2 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#111113]"
+              >
+                {isCompiling ? (
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                ) : downloadDone ? (
+                  <Check className="w-4 h-4" aria-hidden="true" />
+                ) : (
+                  <Download className="w-4 h-4" aria-hidden="true" />
+                )}
+                {isCompiling
+                  ? 'Merender HD PNG...'
+                  : downloadDone
+                    ? 'Tersimpan sebagai PNG HD'
+                    : 'Unduh HD PNG'}
+              </button>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={handleCopyPNG}
+                  disabled={isCompiling}
+                  className="min-h-[44px] px-3 py-2.5 rounded-xl bg-[#18181B] text-[#FAFAFA] hover:bg-zinc-800 border border-zinc-700 disabled:opacity-60 font-medium text-xs sm:text-sm flex items-center justify-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                >
+                  {copyDone ? (
+                    <Check className="w-4 h-4" aria-hidden="true" />
+                  ) : (
+                    <Copy className="w-4 h-4" aria-hidden="true" />
+                  )}
+                  {copyDone ? 'Disalin' : 'Salin Gambar'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleRetakeAll}
+                  className="min-h-[44px] px-3 py-2.5 rounded-xl bg-[#18181B] text-[#FAFAFA] hover:bg-zinc-800 border border-zinc-700 font-medium text-xs sm:text-sm flex items-center justify-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                >
+                  <RotateCcw className="w-4 h-4" aria-hidden="true" />
+                  Foto Ulang
+                </button>
+              </div>
+            </div>
+          </section>
+
+          {/* Right Editing Tools */}
+          <section
+            aria-label="Alat edit stiker, frame, filter, dan teks"
+            className="lg:col-span-7 bg-[#111113] border border-zinc-800 rounded-2xl p-5 sm:p-6 space-y-5"
+          >
+            {/* 4 Edit Tabs */}
+            <div
+              role="tablist"
+              aria-label="Tab editor hasil foto"
+              className="grid grid-cols-4 gap-1.5 p-1 rounded-xl bg-[#09090B] border border-zinc-800"
+            >
+              {[
+                { id: 'stickers' as EditTab, label: 'Stiker', icon: Smile },
+                { id: 'frames' as EditTab, label: 'Frame', icon: Layers },
+                { id: 'filters' as EditTab, label: 'Filter', icon: SlidersHorizontal },
+                { id: 'caption' as EditTab, label: 'Teks', icon: Type },
+              ].map(({ id, label, icon: Icon }) => {
+                const active = editTab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setEditTab(id)}
+                    className={`min-h-[42px] px-2 py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                      active
+                        ? 'bg-white text-[#09090B]'
+                        : 'text-[#A1A1AA] hover:text-white hover:bg-[#18181B]'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" aria-hidden="true" />
+                    <span>{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* STICKERS TAB */}
+            {editTab === 'stickers' && (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-[#A1A1AA]">
+                    Klik stiker untuk menambahkan, atau tarik langsung ke atas foto.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <label
+                      htmlFor="pb-sticker-upload"
+                      className="min-h-[36px] px-3 py-1.5 rounded-lg bg-[#18181B] border border-zinc-700 hover:bg-zinc-800 text-xs font-medium text-[#FAFAFA] flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+                      Upload Stiker
+                    </label>
+                    <input
+                      id="pb-sticker-upload"
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={handleStickerUpload}
+                      className="sr-only"
+                    />
+
+                    {placedStickers.length > 0 && (
                       <button
                         type="button"
-                        onClick={() => handleAddSticker(asset.id)}
-                        draggable="true"
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData('text/plain', asset.id);
+                        onClick={() => {
+                          setPlacedStickers([]);
+                          setSelectedStickerId(null);
                         }}
-                        className="w-full h-full hover:scale-110 active:scale-95 transition-transform duration-200 cursor-pointer flex items-center justify-center p-1.5 rounded-lg bg-zinc-900 border border-zinc-850 hover:bg-zinc-850 hover:border-zinc-700 overflow-hidden"
-                        title={asset.name}
+                        className="min-h-[36px] px-3 py-1.5 rounded-lg bg-[#2A1215] border border-[#B91C1C] text-[#FECACA] hover:bg-[#3A161A] text-xs font-medium flex items-center gap-1 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                        Hapus Semua
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Selected Sticker Inspector */}
+                {selectedSticker && (
+                  <div className="p-4 rounded-xl bg-[#09090B] border border-zinc-700 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-white">
+                        Atur Stiker Terpilih
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={duplicateSelectedSticker}
+                          className="min-h-[34px] px-2.5 py-1 rounded-lg bg-[#18181B] border border-zinc-700 hover:bg-zinc-800 text-xs text-[#FAFAFA] flex items-center gap-1 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                        >
+                          <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+                          Duplikat
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPlacedStickers((prev) =>
+                              prev.filter((s) => s.id !== selectedSticker.id)
+                            );
+                            setSelectedStickerId(null);
+                          }}
+                          className="min-h-[34px] px-2.5 py-1 rounded-lg bg-[#2A1215] border border-[#B91C1C] text-[#FECACA] hover:bg-[#3A161A] text-xs flex items-center gap-1 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                          Hapus
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-xs">
+                          <label htmlFor="pb-sticker-size" className="text-[#A1A1AA]">
+                            Ukuran
+                          </label>
+                          <span className="font-mono text-white">{selectedSticker.size}%</span>
+                        </div>
+                        <input
+                          id="pb-sticker-size"
+                          type="range"
+                          min={8}
+                          max={48}
+                          value={selectedSticker.size}
+                          onChange={(e) =>
+                            updateSelectedSticker({ size: Number(e.target.value) })
+                          }
+                          className="w-full accent-white cursor-pointer"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-xs">
+                          <label htmlFor="pb-sticker-rotation" className="text-[#A1A1AA]">
+                            Rotasi
+                          </label>
+                          <span className="font-mono text-white">
+                            {selectedSticker.rotation} deg
+                          </span>
+                        </div>
+                        <input
+                          id="pb-sticker-rotation"
+                          type="range"
+                          min={-180}
+                          max={180}
+                          value={selectedSticker.rotation}
+                          onChange={(e) =>
+                            updateSelectedSticker({ rotation: Number(e.target.value) })
+                          }
+                          className="w-full accent-white cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Built-in & Uploaded Stickers Grid */}
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 max-h-[340px] overflow-y-auto pr-1 scrollbar-mono">
+                  {allSelectableStickers.map((asset) => (
+                    <div
+                      key={asset.id}
+                      className="relative group"
+                    >
+                      <button
+                        type="button"
+                        draggable
+                        onDragStart={(e) => e.dataTransfer.setData('text/plain', asset.id)}
+                        onClick={() => addStickerToCanvas(asset.id)}
+                        title={`Tambah stiker ${asset.name}`}
+                        aria-label={`Tambah stiker ${asset.name}`}
+                        className="w-full aspect-square p-2.5 rounded-xl bg-[#09090B] border border-zinc-800 hover:border-zinc-500 hover:bg-[#18181B] flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                       >
                         {asset.isCustom && asset.src ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img 
-                            src={asset.src} 
-                            alt={asset.name} 
-                            className="w-full h-full object-contain pointer-events-none" 
+                          <img
+                            src={asset.src}
+                            alt=""
+                            className="w-10 h-10 object-contain pointer-events-none"
                           />
                         ) : (
-                          <div 
-                            className="w-full h-full flex items-center justify-center pointer-events-none" 
-                            dangerouslySetInnerHTML={{ __html: asset.svg }} 
+                          <div
+                            className="w-10 h-10 flex items-center justify-center pointer-events-none [&>svg]:w-full [&>svg]:h-full"
+                            dangerouslySetInnerHTML={{ __html: asset.svg }}
                           />
                         )}
                       </button>
+
                       {asset.isCustom && (
                         <button
                           type="button"
-                          onClick={(e) => handleDeleteUploadedSticker(asset.id, e)}
-                          className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 rounded-full flex items-center justify-center text-white text-[8px] font-bold border border-white shadow-lg cursor-pointer z-10 opacity-0 group-hover/stickerItem:opacity-100 transition-opacity"
-                          title="Hapus Stiker Custom"
+                          onClick={() => handleDeleteUploadedSticker(asset.id)}
+                          aria-label={`Hapus stiker tersimpan ${asset.name}`}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-600 text-white border border-white flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity cursor-pointer"
                         >
-                          ✕
+                          <X className="w-3 h-3" />
                         </button>
                       )}
                     </div>
                   ))}
                 </div>
-
-                <div className="text-[10px] text-zinc-550 leading-tight">
-                  💡 Klik stiker untuk menempel di tengah, atau <strong>drag & drop</strong> stiker langsung ke frame preview!
-                </div>
-
-                {selectedStickerId && (() => {
-                  const sticker = placedStickers.find(s => s.id === selectedStickerId);
-                  if (!sticker) return null;
-                  return (
-                    <div className="flex flex-col gap-3.5 bg-zinc-950/40 p-4 border border-zinc-800/80 rounded-2xl text-xs animate-fade-in">
-                      <div className="flex justify-between items-center text-2xs uppercase font-bold text-zinc-500">
-                        <span>Pengaturan Stiker</span>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteSticker(sticker.id)}
-                          className="text-red-400 hover:text-red-300 font-semibold"
-                        >
-                          Hapus
-                        </button>
-                      </div>
-
-                      <div className="flex flex-col gap-1">
-                        <div className="flex justify-between text-3xs text-zinc-500 font-semibold">
-                          <span>Ukuran</span>
-                          <span>{sticker.size}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="5"
-                          max="35"
-                          value={sticker.size}
-                          onChange={(e) => {
-                            const newSize = parseInt(e.target.value);
-                            setPlacedStickers(prev => prev.map(s => s.id === sticker.id ? { ...s, size: newSize } : s));
-                          }}
-                          className="w-full h-1 bg-zinc-850 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                        />
-                      </div>
-
-                      <div className="flex flex-col gap-1">
-                        <div className="flex justify-between text-3xs text-zinc-550 font-semibold">
-                          <span>Putaran</span>
-                          <span>{sticker.rotation}°</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="-180"
-                          max="180"
-                          value={sticker.rotation}
-                          onChange={(e) => {
-                            const newRot = parseInt(e.target.value);
-                            setPlacedStickers(prev => prev.map(s => s.id === sticker.id ? { ...s, rotation: newRot } : s));
-                          }}
-                          className="w-full h-1 bg-zinc-850 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                        />
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {placedStickers.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPlacedStickers([]);
-                      setSelectedStickerId(null);
-                    }}
-                    className="w-full py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-300 font-semibold text-2xs uppercase tracking-wider transition-colors cursor-pointer"
-                  >
-                    Hapus Semua Stiker
-                  </button>
-                )}
               </div>
+            )}
 
-              <div className="bg-zinc-900/50 backdrop-blur-xl border border-zinc-800 rounded-3xl p-5 flex flex-col gap-3">
-                <span className="text-xs font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  Edit Filter
-                </span>
-                <div className="grid grid-cols-4 gap-1.5">
-                  {PHOTO_FILTERS.map((filt) => (
+            {/* SWITCH FRAME LIVE IN EDIT MODE */}
+            {editTab === 'frames' && (
+              <FramePickerPanel
+                templates={templates}
+                selectedTemplate={selectedTemplate}
+                onSelectTemplate={handleSelectTemplate}
+                customFrameConfig={customFrameConfig}
+                customFrameImage={customFrameImage}
+                onSaveCustomConfig={saveCustomConfig}
+                onCustomFrameUpload={handleCustomFrameUpload}
+                isAdjustingFrame={isAdjustingFrame}
+                setIsAdjustingFrame={setIsAdjustingFrame}
+                customFramePosition={customFramePosition}
+                setCustomFramePosition={setCustomFramePosition}
+                hasSanityTemplates={initialSanityTemplates.length > 0}
+                customDetectedSlotsCount={customDetectedSlots?.length ?? 0}
+                useAutoDetectedSlots={useAutoDetectedSlots}
+                onToggleAutoDetectedSlots={() => setUseAutoDetectedSlots((v) => !v)}
+              />
+            )}
+
+            {/* SWITCH FILTER LIVE IN EDIT MODE */}
+            {editTab === 'filters' && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                {PHOTO_FILTERS.map((filter) => {
+                  const active = activeFilter.id === filter.id;
+                  return (
                     <button
-                      key={filt.id}
+                      key={filter.id}
                       type="button"
-                      onClick={() => handleFilterChange(filt)}
-                      className={`px-1.5 py-2 rounded-lg text-2xs font-semibold border text-center transition-all duration-300 ${
-                        activeFilter.id === filt.id
-                          ? 'bg-zinc-200 text-zinc-950 border-zinc-200'
-                          : 'bg-zinc-900/60 border-zinc-850 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+                      onClick={() => setActiveFilter(filter)}
+                      aria-pressed={active}
+                      className={`min-h-[48px] px-3 py-2.5 rounded-xl border flex items-center gap-2.5 text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                        active
+                          ? 'bg-white text-[#09090B] border-white font-semibold'
+                          : 'bg-[#18181B] text-[#FAFAFA] border-zinc-800 hover:border-zinc-600'
                       }`}
                     >
-                      {filt.name}
+                      <span
+                        className="w-6 h-6 rounded-full shrink-0 border border-black/20"
+                        style={{ background: filter.swatch }}
+                        aria-hidden="true"
+                      />
+                      <span className="text-xs truncate">{filter.name}</span>
                     </button>
-                  ))}
+                  );
+                })}
+              </div>
+            )}
+
+            {/* EDIT CAPTION & DATE */}
+            {editTab === 'caption' && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label
+                    htmlFor="pb-edit-caption"
+                    className="block text-sm font-medium text-[#FAFAFA]"
+                  >
+                    Teks Footer Frame
+                  </label>
+                  <input
+                    id="pb-edit-caption"
+                    type="text"
+                    maxLength={36}
+                    value={customCaption}
+                    onChange={(e) => setCustomCaption(e.target.value)}
+                    placeholder={activeSpec.defaultCaption}
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl bg-[#09090B] border border-zinc-700 text-sm text-white placeholder:text-[#94949E] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  />
+                  <p className="text-xs text-[#94949E]">
+                    Perubahan langsung terlihat pada pratinjau dan ikut tercetak di HD PNG.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 p-3.5 rounded-xl bg-[#09090B] border border-zinc-800">
+                  <div>
+                    <label htmlFor="pb-edit-show-date" className="text-sm font-medium text-white block">
+                      Tampilkan Tanggal Cetak
+                    </label>
+                    <p className="text-xs text-[#94949E]">
+                      Menampilkan stempel tanggal di bagian bawah frame bawaan.
+                    </p>
+                  </div>
+                  <input
+                    id="pb-edit-show-date"
+                    type="checkbox"
+                    checked={showDate}
+                    onChange={(e) => setShowDate(e.target.checked)}
+                    className="w-5 h-5 accent-white cursor-pointer"
+                  />
+                </div>
+
+                <div className="pt-2 border-t border-zinc-800 flex items-center justify-between gap-3">
+                  <p className="text-xs text-[#A1A1AA]">
+                    Ingin mengganti semua foto sekaligus dari galeri?
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => bulkUploadInputRef.current?.click()}
+                    className="min-h-[40px] px-3.5 py-2 rounded-lg bg-[#18181B] border border-zinc-700 hover:bg-zinc-800 text-xs font-medium text-white flex items-center gap-1.5 shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  >
+                    <ImagePlus className="w-3.5 h-3.5" aria-hidden="true" />
+                    Upload Ulang Foto
+                  </button>
                 </div>
               </div>
-
-              <div className="flex flex-col gap-3">
-                <button
-                  type="button"
-                  onClick={handleDownload}
-                  disabled={isCompiling}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:bg-zinc-800 disabled:text-zinc-650 text-zinc-950 transition-all duration-300 font-bold text-sm active:scale-95 shadow-xl shadow-emerald-500/10 cursor-pointer"
-                >
-                  {isCompiling ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Memproses Unduhan...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-5 h-5" />
-                      Simpan Foto
-                    </>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleRetake}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-850 hover:text-white transition-all duration-300 font-semibold text-sm active:scale-95 shadow-md cursor-pointer"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                  Foto Ulang
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleBackToIdle}
-                className="text-2xs text-zinc-550 hover:text-zinc-300 transition-colors uppercase tracking-widest font-bold text-center mt-2 cursor-pointer"
-              >
-                Kembali ke Menu Utama
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </div>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
